@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ document.title }} · Support Knowledge Engine{% endblock %}
+{% block content %}
+  <div class="breadcrumb"><a href="{{ url_for('main.index') }}">文档库</a><span>/</span><span>{{ document.filename }}</span></div>
+
+  <section class="document-hero">
+    <div>
+      <div class="result-meta">
+        <span class="status status-{{ 'ready' if document.status == '已索引' else 'pending' }}">{{ document.status }}</span>
+        <span>{{ document.page_count }} 页</span>
+      </div>
+      <h1>{{ document.title }}</h1>
+      <p>{{ document.filename }}</p>
+    </div>
+    <a class="button-primary" href="{{ url_for('main.document_file', document_id=document.id) }}" target="_blank" rel="noopener">打开原始 PDF</a>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading"><h2>文档元数据</h2></div>
+    <dl class="metadata-grid">
+      <div><dt>产品系列</dt><dd>{{ document.product_series }}</dd></div>
+      <div><dt>产品型号</dt><dd>{{ document.product_model }}</dd></div>
+      <div><dt>文档类型</dt><dd>{{ document.document_type }}</dd></div>
+      <div><dt>语言</dt><dd>{{ document.language }}</dd></div>
+      <div><dt>版本号</dt><dd>{{ document.version }}</dd></div>
+      <div><dt>发布日期</dt><dd>{{ document.release_date }}</dd></div>
+      <div class="span-two"><dt>原始来源网址</dt><dd>{% if document.source_url.startswith('http') %}<a href="{{ document.source_url }}" target="_blank" rel="noopener">{{ document.source_url }}</a>{% else %}{{ document.source_url }}{% endif %}</dd></div>
+      <div class="span-two"><dt>文件 SHA-256</dt><dd class="hash">{{ document.sha256 }}</dd></div>
+      <div class="span-two"><dt>原始路径</dt><dd class="path-value">{{ document.file_path }}</dd></div>
+      <div><dt>导入时间</dt><dd>{{ document.imported_at }}</dd></div>
+    </dl>
+  </section>
+
+  <section class="page-list" aria-labelledby="pages-heading">
+    <div class="section-heading">
+      <p class="eyebrow">可追溯文本</p>
+      <h2 id="pages-heading">按页提取内容</h2>
+    </div>
+    {% for page in pages %}
+      <article class="page-card" id="page-{{ page.page_number }}">
+        <div class="page-card-heading">
+          <h3>第 {{ page.page_number }} 页</h3>
+          <a href="{{ url_for('main.document_file', document_id=document.id) }}#page={{ page.page_number }}" target="_blank" rel="noopener">在原 PDF 中打开</a>
+        </div>
+        <pre>{{ page.content if page.content else '（本页没有可提取文本）' }}</pre>
+      </article>
+    {% endfor %}
+  </section>
+{% endblock %}
+

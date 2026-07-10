@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}导入日志 · Support Knowledge Engine{% endblock %}
+{% block content %}
+  <section class="page-title">
+    <p class="eyebrow">审计与恢复</p>
+    <h1>导入日志</h1>
+    <p>每次扫描都会保存目录、统计结果，以及每个文件的成功、重复或失败原因。</p>
+  </section>
+
+  <section class="log-list">
+    {% for run in runs %}
+      <article class="panel log-run">
+        <div class="log-summary">
+          <div>
+            <span class="status status-{{ 'ready' if run.status == '完成' else 'pending' }}">{{ run.status }}</span>
+            <h2>扫描 #{{ run.id }}</h2>
+            <p class="path-value">{{ run.directory }}</p>
+          </div>
+          <dl class="stat-grid">
+            <div><dt>发现</dt><dd>{{ run.discovered_count }}</dd></div>
+            <div><dt>导入</dt><dd>{{ run.imported_count }}</dd></div>
+            <div><dt>重复</dt><dd>{{ run.duplicate_count }}</dd></div>
+            <div><dt>失败</dt><dd>{{ run.failed_count }}</dd></div>
+          </dl>
+        </div>
+        <div class="log-time">开始：{{ run.started_at }}{% if run.finished_at %} · 完成：{{ run.finished_at }}{% endif %}</div>
+        {% if run.error_message %}<div class="inline-error">{{ run.error_message }}</div>{% endif %}
+        {% if items.get(run.id) %}
+          <details {% if run.failed_count %}open{% endif %}>
+            <summary>查看 {{ items[run.id]|length }} 条文件记录</summary>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>结果</th><th>文件</th><th>说明</th><th>SHA-256</th></tr></thead>
+                <tbody>
+                  {% for item in items[run.id] %}
+                    <tr>
+                      <td><span class="status status-{{ 'ready' if item.outcome == '已导入' else 'pending' }}">{{ item.outcome }}</span></td>
+                      <td class="path-value">{{ item.file_path }}</td>
+                      <td>{{ item.message }}</td>
+                      <td class="hash compact">{{ item.sha256 or '—' }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        {% endif %}
+      </article>
+    {% else %}
+      <div class="empty-state">
+        <strong>还没有导入记录</strong>
+        <p><a href="{{ url_for('main.index') }}">返回文档页</a>开始第一次目录扫描。</p>
+      </div>
+    {% endfor %}
+  </section>
+{% endblock %}
+

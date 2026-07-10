@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="可追溯到 PDF 页码的本地产品支持文档知识引擎">
+  <title>{% block title %}Support Knowledge Engine{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a class="brand" href="{{ url_for('main.index') }}">
+        <span class="brand-mark" aria-hidden="true">SK</span>
+        <span>
+          <strong>Support Knowledge Engine</strong>
+          <small>本地 PDF 知识引擎</small>
+        </span>
+      </a>
+      <nav aria-label="主导航">
+        <a href="{{ url_for('main.index') }}">文档与检索</a>
+        <a href="{{ url_for('main.logs') }}">导入日志</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell page-stack">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="alerts" aria-live="polite">
+          {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="shell site-footer">
+    仅在本机运行 · 原始 PDF 保持不变 · 搜索结果可追溯到文件和页码
+  </footer>
+</body>
+</html>
+

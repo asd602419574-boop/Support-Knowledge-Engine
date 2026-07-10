@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}文档与检索 · Support Knowledge Engine{% endblock %}
+{% block content %}
+  <section class="intro">
+    <div>
+      <p class="eyebrow">阶段一 MVP</p>
+      <h1>从本地 PDF 中找到可核验的原文</h1>
+      <p>按目录导入产品文档，使用 SHA-256 去重，并将每条搜索结果定位到原始文件的具体页码。</p>
+    </div>
+    <div class="trust-note">
+      <strong>保守识别</strong>
+      <span>无法可靠提取的元数据统一标记为“待确认”。</span>
+    </div>
+  </section>
+
+  <section class="panel import-panel" aria-labelledby="import-heading">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">01 · 导入</p>
+        <h2 id="import-heading">扫描本地 PDF 目录</h2>
+      </div>
+      <a class="text-link" href="{{ url_for('main.logs') }}">查看失败清单与历史日志</a>
+    </div>
+    <form class="import-form" method="post" action="{{ url_for('main.start_import') }}">
+      <div class="field field-grow">
+        <label for="directory">本地目录完整路径</label>
+        <input id="directory" name="directory" type="text" required
+               placeholder="例如：D:\资料\产品手册" autocomplete="off">
+        <small>递归扫描目录及子目录中的 .pdf 文件；不会修改或复制原文件。</small>
+      </div>
+      <button type="submit">开始扫描</button>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="search-heading">
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">02 · 检索</p>
+        <h2 id="search-heading">文档检索</h2>
+      </div>
+      {% if query %}<span class="result-count">{{ results|length }} 条页级结果</span>{% endif %}
+    </div>
+    <form class="search-form" method="get" action="{{ url_for('main.index') }}">
+      <div class="field search-field">
+        <label for="q">关键词</label>
+        <input id="q" name="q" type="search" value="{{ query }}"
+               placeholder="输入故障码、功能名或原文片段">
+      </div>
+      <div class="field">
+        <label for="product_series">产品系列</label>
+        <select id="product_series" name="product_series">
+          <option value="">全部系列</option>
+          {% for value in options.product_series %}
+            <option value="{{ value }}" {% if value == product_series %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="document_type">文档类型</label>
+        <select id="document_type" name="document_type">
+          <option value="">全部类型</option>
+          {% for value in options.document_type %}
+            <option value="{{ value }}" {% if value == document_type %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit">搜索</button>
+      {% if query or product_series or document_type %}
+        <a class="button-secondary" href="{{ url_for('main.index') }}">清除</a>
+      {% endif %}
+    </form>
+  </section>
+
+  {% if query %}
+    <section class="results" aria-label="搜索结果">
+      {% for result in results %}
+        <article class="result-card">
+          <div class="result-main">
+            <div class="result-meta">
+              <span class="badge">第 {{ result.page_number }} 页</span>
+              <span>{{ result.product_series }}</span>
+              <span>{{ result.document_type }}</span>
+            </div>
+            <h3><a href="{{ url_for('main.document_detail', document_id=result.id) }}">{{ result.title }}</a></h3>
+            <p class="filename">{{ result.filename }}</p>
+            <p class="snippet">{{ result.snippet }}</p>
+          </div>
+          <div class="result-actions">
+            <a href="{{ url_for('main.document_file', document_id=result.id) }}#page={{ result.page_number }}" target="_blank" rel="noopener">打开原始 PDF</a>
+            <a href="{{ url_for('main.document_detail', document_id=result.id) }}#page-{{ result.page_number }}">查看页文本</a>
+          </div>
+        </article>
+      {% else %}
+        <div class="empty-state">
+          <strong>没有找到匹配原文</strong>
+          <p>可以尝试缩短关键词，或清除产品和文档类型筛选。</p>
+        </div>
+      {% endfor %}
+    </section>
+  {% else %}
+    <section class="panel table-panel" aria-labelledby="documents-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">03 · 文档库</p>
+          <h2 id="documents-heading">已导入文档</h2>
+        </div>
+        <span class="result-count">{{ documents|length }} 份</span>
+      </div>
+      {% if documents %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>文档</th>
+                <th>产品</th>
+                <th>类型</th>
+                <th>版本 / 语言</th>
+                <th>状态</th>
+                <th>页数</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for document in documents %}
+                <tr>
+                  <td>
+                    <a class="document-title" href="{{ url_for('main.document_detail', document_id=document.id) }}">{{ document.title }}</a>
+                    <span class="subtle">{{ document.filename }}</span>
+                  </td>
+                  <td>{{ document.product_series }}<span class="subtle">{{ document.product_model }}</span></td>
+                  <td>{{ document.document_type }}</td>
+                  <td>{{ document.version }}<span class="subtle">{{ document.language }}</span></td>
+                  <td><span class="status status-{{ 'ready' if document.status == '已索引' else 'pending' }}">{{ document.status }}</span></td>
+                  <td>{{ document.page_count }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty-state">
+          <strong>文档库还是空的</strong>
+          <p>在上方输入包含 PDF 的本地目录，完成首次扫描。</p>
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+{% endblock %}
+
