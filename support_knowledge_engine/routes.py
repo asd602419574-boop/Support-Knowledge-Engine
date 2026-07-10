@@ -15,14 +15,31 @@ from flask import (
 )
 
 from .db import connect_database
+from .governance import (
+    ValidationError,
+    add_product_alias,
+    create_product,
+    set_alias_enabled,
+    update_document,
+    update_product,
+)
 from .importer import calculate_sha256, import_directory
 from .repository import (
+    alias_conflict_products,
+    audit_filter_options,
     filter_options,
+    get_audit_log,
     get_document,
+    get_document_field_values,
     get_document_pages,
     get_import_items,
     get_import_runs,
+    get_product,
+    get_product_aliases,
+    get_product_documents,
+    get_replacement_candidates,
     list_documents,
+    list_products,
     search_documents,
 )
 
@@ -34,18 +51,47 @@ def _database_path() -> str:
     return current_app.config["DATABASE"]
 
 
+def _operator_name() -> str:
+    return current_app.config["OPERATOR_NAME"]
+
+
+def _flash_validation_error(error: ValidationError) -> None:
+    for message in error.errors.values():
+        flash(message, "error")
+
+
 @bp.get("/")
 def index():
     query = request.args.get("q", "").strip()
     product_series = request.args.get("product_series", "").strip()
     document_type = request.args.get("document_type", "").strip()
+    status = request.args.get("status", "").strip()
+    association = request.args.get("association", "").strip()
+    product_id = request.args.get("product_id", "").strip()
     with connect_database(_database_path()) as connection:
         options = filter_options(connection)
         if query:
-            results = search_documents(connection, query, product_series, document_type)
+            results = search_documents(
+                connection,
+                query,
+                product_series,
+                document_type,
+                status,
+                association,
+                product_id,
+            )
+            alias_conflicts = alias_conflict_products(connection, query)
             documents = []
         else:
-            documents = list_documents(connection, product_series, document_type)
+            documents = list_documents(
+                connection,
+                product_series,
+                document_type,
+                status,
+                association,
+                product_id,
+            )
+            alias_conflicts = []
             results = []
 
     return render_template(
@@ -53,9 +99,13 @@ def index():
         query=query,
         product_series=product_series,
         document_type=document_type,
+        status=status,
+        association=association,
+        product_id=product_id,
         options=options,
         documents=documents,
         results=results,
+        alias_conflicts=alias_conflicts,
     )
 
 
@@ -78,14 +128,41 @@ def start_import():
     return redirect(url_for("main.logs"))
 
 
-@bp.get("/documents/<int:document_id>")
-def document_detail(document_id: int):
+def _document_page_context(document_id: int) -> dict[str, object]:
     with connect_database(_database_path()) as connection:
         document = get_document(connection, document_id)
         if document is None:
             abort(404)
-        pages = get_document_pages(connection, document_id)
-    return render_template("document.html", document=document, pages=pages)
+        return {
+            "document": document,
+            "pages": get_document_pages(connection, document_id),
+            "field_values": get_document_field_values(connection, document_id),
+            "products": list_products(connection),
+            "replacement_candidates": get_replacement_candidates(connection, document_id),
+            "audit_entries": get_audit_log(
+                connection, object_type="document", object_id=document_id, limit=100
+            ),
+        }
+
+
+@bp.get("/documents/<int:document_id>")
+def document_detail(document_id: int):
+    return render_template("document.html", **_document_page_context(document_id))
+
+
+@bp.post("/documents/<int:document_id>/edit")
+def edit_document(document_id: int):
+    values = request.form.to_dict()
+    reason = request.form.get("reason", "")
+    try:
+        with connect_database(_database_path()) as connection:
+            changed = update_document(
+                connection, document_id, values, reason, _operator_name()
+            )
+        flash(f"已保存 {changed} 项修改，并写入审计日志。", "success")
+    except ValidationError as exc:
+        _flash_validation_error(exc)
+    return redirect(url_for("main.document_detail", document_id=document_id))
 
 
 @bp.get("/documents/<int:document_id>/file")
@@ -110,3 +187,124 @@ def logs():
         items = get_import_items(connection)
     return render_template("logs.html", runs=runs, items=items)
 
+
+@bp.get("/products")
+def products():
+    with connect_database(_database_path()) as connection:
+        product_rows = list_products(connection)
+    return render_template("products.html", products=product_rows)
+
+
+@bp.post("/products")
+def create_product_route():
+    try:
+        with connect_database(_database_path()) as connection:
+            product_id = create_product(
+                connection, request.form.to_dict(), request.form.get("reason", ""), _operator_name()
+            )
+        flash("规范产品已创建，标准名称同时加入别名库。", "success")
+        return redirect(url_for("main.product_detail", product_id=product_id))
+    except ValidationError as exc:
+        _flash_validation_error(exc)
+        return redirect(url_for("main.products"))
+
+
+@bp.get("/products/<int:product_id>")
+def product_detail(product_id: int):
+    with connect_database(_database_path()) as connection:
+        product = get_product(connection, product_id)
+        if not product:
+            abort(404)
+        aliases = get_product_aliases(connection, product_id)
+        documents = get_product_documents(connection, product_id)
+        audit_entries = get_audit_log(
+            connection, object_type="product", object_id=product_id, limit=100
+        )
+    return render_template(
+        "product.html",
+        product=product,
+        aliases=aliases,
+        documents=documents,
+        audit_entries=audit_entries,
+    )
+
+
+@bp.post("/products/<int:product_id>/edit")
+def edit_product_route(product_id: int):
+    try:
+        with connect_database(_database_path()) as connection:
+            changed = update_product(
+                connection,
+                product_id,
+                request.form.to_dict(),
+                request.form.get("reason", ""),
+                _operator_name(),
+            )
+        flash(f"已保存 {changed} 项产品修改。", "success")
+    except ValidationError as exc:
+        _flash_validation_error(exc)
+    return redirect(url_for("main.product_detail", product_id=product_id))
+
+
+@bp.post("/products/<int:product_id>/aliases")
+def add_alias_route(product_id: int):
+    try:
+        with connect_database(_database_path()) as connection:
+            _, match = add_product_alias(
+                connection,
+                product_id,
+                request.form.get("alias_text", ""),
+                request.form.get("alias_type", ""),
+                request.form.get("reason", ""),
+                _operator_name(),
+            )
+        if match.status == "conflict":
+            flash("别名已保存，但它同时匹配多个产品，已标记为冲突，自动关联将暂停。", "warning")
+        else:
+            flash("产品别名已添加。", "success")
+    except ValidationError as exc:
+        _flash_validation_error(exc)
+    return redirect(url_for("main.product_detail", product_id=product_id))
+
+
+@bp.post("/aliases/<int:alias_id>/toggle")
+def toggle_alias_route(alias_id: int):
+    product_id = request.form.get("product_id", "")
+    if not product_id.isdigit():
+        abort(400)
+    try:
+        with connect_database(_database_path()) as connection:
+            set_alias_enabled(
+                connection,
+                alias_id,
+                request.form.get("enabled") == "1",
+                request.form.get("reason", ""),
+                _operator_name(),
+            )
+        flash("别名状态已更新。", "success")
+    except ValidationError as exc:
+        _flash_validation_error(exc)
+    return redirect(url_for("main.product_detail", product_id=int(product_id)))
+
+
+@bp.get("/audit")
+def audit_log():
+    object_type = request.args.get("object_type", "").strip()
+    field_name = request.args.get("field_name", "").strip()
+    operator = request.args.get("operator", "").strip()
+    with connect_database(_database_path()) as connection:
+        entries = get_audit_log(
+            connection,
+            object_type=object_type,
+            field_name=field_name,
+            operator=operator,
+        )
+        options = audit_filter_options(connection)
+    return render_template(
+        "audit.html",
+        entries=entries,
+        options=options,
+        object_type=object_type,
+        field_name=field_name,
+        operator=operator,
+    )

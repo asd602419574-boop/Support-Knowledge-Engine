@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}产品治理 · Support Knowledge Engine{% endblock %}
+{% block content %}
+  <section class="page-title"><p class="eyebrow">规范化产品实体</p><h1>产品治理</h1><p>用标准产品名称统一中英文名称、缩写和常见写法；冲突别名不会自动关联文档。</p></section>
+
+  <section class="panel">
+    <div class="panel-heading"><div><p class="eyebrow">新增产品</p><h2>创建规范产品</h2></div><span class="operator-chip">操作者：{{ operator_name }}</span></div>
+    <form method="post" action="{{ url_for('main.create_product_route') }}" class="inline-governance-form">
+      <div class="field field-grow"><label for="standard_name">标准产品名称</label><input id="standard_name" name="standard_name" required placeholder="例如：AeroCam Mini 2"></div>
+      <div class="field"><label for="product_series">产品系列</label><input id="product_series" name="product_series" required placeholder="例如：AeroCam"></div>
+      <div class="field"><label for="status">产品状态</label><select id="status" name="status" required>{% for value, label in product_status_labels.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div>
+      <div class="field field-grow"><label for="reason">创建原因</label><input id="reason" name="reason" required maxlength="240" placeholder="例如：建立虚构测试产品规范实体"></div>
+      <button type="submit">创建产品</button>
+    </form>
+  </section>
+
+  <section class="panel table-panel">
+    <div class="panel-heading"><div><p class="eyebrow">产品目录</p><h2>规范产品与别名概览</h2></div><span class="result-count">{{ products|length }} 个</span></div>
+    {% if products %}<div class="table-scroll"><table><thead><tr><th>标准产品</th><th>系列</th><th>状态</th><th>别名</th><th>关联文档</th><th>冲突</th></tr></thead><tbody>
+      {% for product in products %}<tr><td><a class="document-title" href="{{ url_for('main.product_detail', product_id=product.id) }}">{{ product.standard_name }}</a></td><td>{{ product.product_series }}</td><td><span class="status status-{{ product.status }}">{{ product_status_labels.get(product.status, product.status) }}</span></td><td>{{ product.alias_count }}</td><td>{{ product.document_count }}</td><td>{% if product.conflict_count %}<span class="status status-conflict">{{ product.conflict_count }} 个冲突</span>{% else %}<span class="subtle">无</span>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>{% else %}<div class="empty-state"><strong>尚未建立规范产品</strong><p>先创建一个产品，再添加中英文名称和缩写。</p></div>{% endif %}
+  </section>
+{% endblock %}

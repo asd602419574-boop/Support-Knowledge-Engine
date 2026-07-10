@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 
-SCHEMA = """
+BASE_SCHEMA = """
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -92,4 +92,6 @@ def connect_database(database_path: str | Path) -> Iterator[sqlite3.Connection]:
 
 def init_database(database_path: str | Path) -> None:
     with connect_database(database_path) as connection:
-        connection.executescript(SCHEMA)
+        from .migrations import apply_migrations
+
+        apply_migrations(connection)

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ product.standard_name }} · 产品治理{% endblock %}
+{% block content %}
+  <div class="breadcrumb"><a href="{{ url_for('main.products') }}">产品治理</a><span>/</span><span>{{ product.standard_name }}</span></div>
+  <section class="document-hero"><div><div class="result-meta"><span class="status status-{{ product.status }}">{{ product_status_labels.get(product.status, product.status) }}</span><span>{{ product.product_series }}</span></div><h1>{{ product.standard_name }}</h1><p>创建：{{ product.created_at }} · 更新：{{ product.updated_at }}</p></div></section>
+
+  <div class="two-column-layout">
+    <section class="panel">
+      <div class="panel-heading"><div><p class="eyebrow">产品信息</p><h2>编辑规范产品</h2></div></div>
+      <form method="post" action="{{ url_for('main.edit_product_route', product_id=product.id) }}" class="stacked-form">
+        <div class="field"><label for="standard_name">标准产品名称</label><input id="standard_name" name="standard_name" value="{{ product.standard_name }}" required></div>
+        <div class="field"><label for="product_series">产品系列</label><input id="product_series" name="product_series" value="{{ product.product_series }}" required></div>
+        <div class="field"><label for="status">产品状态</label><select id="status" name="status">{% for value, label in product_status_labels.items() %}<option value="{{ value }}" {% if product.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="product-reason">修改原因</label><input id="product-reason" name="reason" required maxlength="240"></div>
+        <button type="submit">保存产品修改</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-heading"><div><p class="eyebrow">别名管理</p><h2>新增名称或缩写</h2></div></div>
+      <form method="post" action="{{ url_for('main.add_alias_route', product_id=product.id) }}" class="stacked-form">
+        <div class="field"><label for="alias_text">别名文本</label><input id="alias_text" name="alias_text" required placeholder="例如：ACM2"></div>
+        <div class="field"><label for="alias_type">别名类型</label><select id="alias_type" name="alias_type">{% for value, label in alias_type_labels.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="alias-reason">添加原因</label><input id="alias-reason" name="reason" required maxlength="240"></div>
+        <button type="submit">添加别名</button>
+      </form>
+    </section>
+  </div>
+
+  <section class="panel table-panel">
+    <div class="panel-heading"><div><p class="eyebrow">名称映射</p><h2>产品别名</h2></div><span class="result-count">英文匹配不区分大小写</span></div>
+    {% if aliases %}<div class="table-scroll"><table><thead><tr><th>别名</th><th>类型</th><th>状态</th><th>匹配结果</th><th>操作</th></tr></thead><tbody>
+      {% for alias in aliases %}<tr><td><strong>{{ alias.alias_text }}</strong><span class="subtle">{{ alias.normalized_alias }}</span></td><td>{{ alias_type_labels.get(alias.alias_type, alias.alias_type) }}</td><td><span class="status status-{{ 'active' if alias.is_enabled else 'inactive' }}">{{ '启用' if alias.is_enabled else '停用' }}</span></td><td>{% if alias.matching_product_count > 1 and alias.is_enabled %}<span class="status status-conflict">冲突：匹配 {{ alias.matching_product_count }} 个产品</span>{% else %}<span class="subtle">唯一</span>{% endif %}</td><td><form method="post" action="{{ url_for('main.toggle_alias_route', alias_id=alias.id) }}" class="compact-form"><input type="hidden" name="product_id" value="{{ product.id }}"><input type="hidden" name="enabled" value="{{ 0 if alias.is_enabled else 1 }}"><input name="reason" required maxlength="240" aria-label="修改 {{ alias.alias_text }} 状态的原因" placeholder="状态变更原因"><button class="button-small" type="submit">{{ '停用' if alias.is_enabled else '启用' }}</button></form></td></tr>{% endfor %}
+    </tbody></table></div>{% else %}<div class="empty-state compact-empty"><strong>尚无别名</strong></div>{% endif %}
+  </section>
+
+  <section class="panel table-panel">
+    <div class="panel-heading"><div><p class="eyebrow">关联资产</p><h2>产品文档</h2></div><span class="result-count">{{ documents|length }} 份</span></div>
+    {% if documents %}<div class="table-scroll"><table><thead><tr><th>文档</th><th>版本</th><th>类型</th><th>状态</th></tr></thead><tbody>{% for document in documents %}<tr><td><a href="{{ url_for('main.document_detail', document_id=document.id) }}">{{ document.title }}</a></td><td>{{ document.version }}</td><td>{{ document.document_type }}</td><td><span class="status status-{{ document.status }}">{{ document_status_labels.get(document.status, document.status) }}</span></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state compact-empty"><strong>还没有文档关联此产品</strong><p>可在文档详情的治理表单中选择该产品。</p></div>{% endif %}
+  </section>
+{% endblock %}

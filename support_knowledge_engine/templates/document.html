@@ -1,50 +1,161 @@
 {% extends "base.html" %}
+{% macro metadata_input(name, label, value, type='text') %}
+  {% set field = field_values.get(name) %}
+  <div class="field governance-field">
+    <label for="{{ name }}">{{ label }}</label>
+    <input id="{{ name }}" name="{{ name }}" type="{{ type }}" value="{{ value }}" required>
+    {% if field %}
+      <div class="value-lineage">
+        <span><strong>原始：</strong>{{ field.extracted_value }}</span>
+        <span><strong>人工：</strong>{{ field.revised_value or '未修订' }}</span>
+        <span><strong>生效：</strong>{{ field.effective_value }}</span>
+      </div>
+    {% endif %}
+  </div>
+{% endmacro %}
 {% block title %}{{ document.title }} · Support Knowledge Engine{% endblock %}
 {% block content %}
-  <div class="breadcrumb"><a href="{{ url_for('main.index') }}">文档库</a><span>/</span><span>{{ document.filename }}</span></div>
+  <div class="breadcrumb"><a href="{{ url_for('main.index') }}">知识资产</a><span>/</span><span>{{ document.filename }}</span></div>
 
   <section class="document-hero">
     <div>
       <div class="result-meta">
-        <span class="status status-{{ 'ready' if document.status == '已索引' else 'pending' }}">{{ document.status }}</span>
+        <span class="status status-{{ document.status }}">{{ document_status_labels.get(document.status, document.status) }}</span>
         <span>{{ document.page_count }} 页</span>
+        <span>{{ authority_level_labels.get(document.authority_level, document.authority_level) }}</span>
       </div>
       <h1>{{ document.title }}</h1>
       <p>{{ document.filename }}</p>
+      {% if document.canonical_product_id %}
+        <p class="canonical-link">规范产品：<a href="{{ url_for('main.product_detail', product_id=document.canonical_product_id) }}">{{ document.canonical_product_name }}</a></p>
+      {% else %}
+        <p class="canonical-link unlinked">尚未关联规范产品</p>
+      {% endif %}
     </div>
-    <a class="button-primary" href="{{ url_for('main.document_file', document_id=document.id) }}" target="_blank" rel="noopener">打开原始 PDF</a>
+    <div class="hero-actions">
+      <a class="button-secondary" href="#governance-edit">编辑治理信息</a>
+      <a class="button-primary" href="{{ url_for('main.document_file', document_id=document.id) }}" target="_blank" rel="noopener">打开原始 PDF</a>
+    </div>
   </section>
 
+  {% if document.status in ('superseded', 'archived') %}
+    <div class="alert alert-warning lifecycle-warning">
+      <strong>{{ document_status_labels[document.status] }}</strong>
+      {% if document.replacement_title %}：已由“{{ document.replacement_title }}”替代。{% endif %}
+      {% if document.status_note %}{{ document.status_note }}{% endif %}
+      历史文档仍保留并可访问原文。
+    </div>
+  {% endif %}
+
   <section class="panel">
-    <div class="panel-heading"><h2>文档元数据</h2></div>
-    <dl class="metadata-grid">
+    <div class="panel-heading"><div><p class="eyebrow">当前生效值</p><h2>文档元数据与生命周期</h2></div></div>
+    <dl class="metadata-grid governance-metadata">
       <div><dt>产品系列</dt><dd>{{ document.product_series }}</dd></div>
       <div><dt>产品型号</dt><dd>{{ document.product_model }}</dd></div>
       <div><dt>文档类型</dt><dd>{{ document.document_type }}</dd></div>
       <div><dt>语言</dt><dd>{{ document.language }}</dd></div>
       <div><dt>版本号</dt><dd>{{ document.version }}</dd></div>
       <div><dt>发布日期</dt><dd>{{ document.release_date }}</dd></div>
+      <div><dt>生效 / 失效</dt><dd>{{ document.effective_date or '未设置' }} / {{ document.expiration_date or '未设置' }}</dd></div>
+      <div><dt>适用固件范围</dt><dd>{{ document.firmware_range or '未设置' }}</dd></div>
       <div class="span-two"><dt>原始来源网址</dt><dd>{% if document.source_url.startswith('http') %}<a href="{{ document.source_url }}" target="_blank" rel="noopener">{{ document.source_url }}</a>{% else %}{{ document.source_url }}{% endif %}</dd></div>
+      <div class="span-two"><dt>状态备注</dt><dd>{{ document.status_note or '无' }}</dd></div>
       <div class="span-two"><dt>文件 SHA-256</dt><dd class="hash">{{ document.sha256 }}</dd></div>
       <div class="span-two"><dt>原始路径</dt><dd class="path-value">{{ document.file_path }}</dd></div>
       <div><dt>导入时间</dt><dd>{{ document.imported_at }}</dd></div>
     </dl>
   </section>
 
-  <section class="page-list" aria-labelledby="pages-heading">
-    <div class="section-heading">
-      <p class="eyebrow">可追溯文本</p>
-      <h2 id="pages-heading">按页提取内容</h2>
+  <section class="panel governance-editor" id="governance-edit">
+    <div class="panel-heading">
+      <div><p class="eyebrow">人工治理</p><h2>编辑元数据与生命周期</h2></div>
+      <span class="operator-chip">操作者：{{ operator_name }}</span>
     </div>
+    <p class="section-help">保存时只更新当前生效值；原始提取值继续保存在数据库中。所有变化必须填写原因并写入不可修改的审计日志。</p>
+    <form method="post" action="{{ url_for('main.edit_document', document_id=document.id) }}" class="governance-form">
+      <fieldset>
+        <legend>基础元数据</legend>
+        <div class="form-grid">
+          {{ metadata_input('title', '文档标题', document.title) }}
+          {{ metadata_input('product_series', '产品系列', document.product_series) }}
+          {{ metadata_input('product_model', '产品型号', document.product_model) }}
+          {{ metadata_input('document_type', '文档类型', document.document_type) }}
+          {{ metadata_input('language', '语言', document.language) }}
+          {{ metadata_input('version', '版本号', document.version) }}
+          {{ metadata_input('release_date', '发布日期（YYYY-MM-DD 或 待确认）', document.release_date) }}
+          {{ metadata_input('source_url', '来源网址（HTTP/HTTPS 或 待确认）', document.source_url) }}
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>规范产品与生命周期</legend>
+        <div class="form-grid">
+          <div class="field">
+            <label for="canonical_product_id">规范产品</label>
+            <select id="canonical_product_id" name="canonical_product_id">
+              <option value="">未关联产品</option>
+              {% for product in products %}
+                <option value="{{ product.id }}" {% if document.canonical_product_id == product.id %}selected{% endif %}>{{ product.standard_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field governance-field">
+            <label for="status">文档状态</label>
+            <select id="status" name="status" required>
+              {% for value, label in document_status_labels.items() %}
+                <option value="{{ value }}" {% if document.status == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {% set status_field = field_values.get('status') %}
+            {% if status_field %}<div class="value-lineage"><span><strong>原始：</strong>{{ document_status_labels.get(status_field.extracted_value, status_field.extracted_value) }}</span><span><strong>人工：</strong>{{ document_status_labels.get(status_field.revised_value, status_field.revised_value or '未修订') }}</span><span><strong>生效：</strong>{{ document_status_labels.get(status_field.effective_value, status_field.effective_value) }}</span></div>{% endif %}
+          </div>
+          <div class="field">
+            <label for="superseded_by_document_id">替代文档</label>
+            <select id="superseded_by_document_id" name="superseded_by_document_id">
+              <option value="">未指定</option>
+              {% for candidate in replacement_candidates %}
+                <option value="{{ candidate.id }}" {% if document.superseded_by_document_id == candidate.id %}selected{% endif %}>{{ candidate.title }} · {{ candidate.version }} · {{ document_status_labels.get(candidate.status, candidate.status) }}</option>
+              {% endfor %}
+            </select>
+            <small>选择“已被替代”状态时必须指定，系统会阻止循环关系。</small>
+          </div>
+          <div class="field">
+            <label for="authority_level">权威等级</label>
+            <select id="authority_level" name="authority_level" required>
+              {% for value, label in authority_level_labels.items() %}
+                <option value="{{ value }}" {% if document.authority_level == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field"><label for="effective_date">生效日期</label><input id="effective_date" name="effective_date" type="date" value="{{ document.effective_date or '' }}"></div>
+          <div class="field"><label for="expiration_date">失效日期</label><input id="expiration_date" name="expiration_date" type="date" value="{{ document.expiration_date or '' }}"></div>
+          <div class="field"><label for="firmware_range">适用固件范围</label><input id="firmware_range" name="firmware_range" value="{{ document.firmware_range }}" placeholder="例如：2.0.0 - 2.9.x"></div>
+          <div class="field span-two"><label for="status_note">状态备注</label><textarea id="status_note" name="status_note" rows="3" placeholder="说明归档、替代或适用边界">{{ document.status_note }}</textarea></div>
+        </div>
+      </fieldset>
+
+      <div class="danger-note"><strong>危险状态提醒：</strong>将文档改为“已被替代”或“已归档”不会删除历史内容，但会降低默认搜索排序。</div>
+      <div class="field reason-field"><label for="reason">修改原因</label><input id="reason" name="reason" required maxlength="240" placeholder="例如：根据发布页核对版本与发布日期"></div>
+      <div class="form-actions"><button type="submit">保存并记录审计</button></div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading"><div><p class="eyebrow">修改历史</p><h2>文档审计记录</h2></div><a class="text-link" href="{{ url_for('main.audit_log', object_type='document') }}">查看全局审计日志</a></div>
+    {% if audit_entries %}
+      <div class="table-scroll"><table><thead><tr><th>时间</th><th>字段</th><th>修改前</th><th>修改后</th><th>原因</th><th>操作者</th></tr></thead><tbody>
+        {% for entry in audit_entries %}<tr><td>{{ entry.changed_at }}</td><td>{{ entry.field_name }}</td><td class="audit-value">{{ entry.before_value or '—' }}</td><td class="audit-value">{{ entry.after_value or '—' }}</td><td>{{ entry.reason }}</td><td>{{ entry.operator }}</td></tr>{% endfor %}
+      </tbody></table></div>
+    {% else %}<div class="empty-state compact-empty"><strong>尚无人工修改</strong><p>首次保存治理信息后，记录会显示在这里。</p></div>{% endif %}
+  </section>
+
+  <section class="page-list" aria-labelledby="pages-heading">
+    <div class="section-heading"><div><p class="eyebrow">可追溯文本</p><h2 id="pages-heading">按页提取内容</h2></div></div>
     {% for page in pages %}
       <article class="page-card" id="page-{{ page.page_number }}">
-        <div class="page-card-heading">
-          <h3>第 {{ page.page_number }} 页</h3>
-          <a href="{{ url_for('main.document_file', document_id=document.id) }}#page={{ page.page_number }}" target="_blank" rel="noopener">在原 PDF 中打开</a>
-        </div>
+        <div class="page-card-heading"><h3>第 {{ page.page_number }} 页</h3><a href="{{ url_for('main.document_file', document_id=document.id) }}#page={{ page.page_number }}" target="_blank" rel="noopener">在原 PDF 中打开</a></div>
         <pre>{{ page.content if page.content else '（本页没有可提取文本）' }}</pre>
       </article>
     {% endfor %}
   </section>
 {% endblock %}
-

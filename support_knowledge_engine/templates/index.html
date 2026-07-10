@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}文档与检索 · Support Knowledge Engine{% endblock %}
+{% block title %}知识资产 · Support Knowledge Engine{% endblock %}
 {% block content %}
-  <section class="intro">
+  <section class="intro compact-intro">
     <div>
-      <p class="eyebrow">阶段一 MVP</p>
-      <h1>从本地 PDF 中找到可核验的原文</h1>
-      <p>按目录导入产品文档，使用 SHA-256 去重，并将每条搜索结果定位到原始文件的具体页码。</p>
+      <p class="eyebrow">知识治理工作台</p>
+      <h1>维护可检索、可追溯、可治理的支持文档</h1>
+      <p>导入仍以原始 PDF 为依据；当前生效元数据、规范产品和生命周期状态由人工治理并保留完整审计。</p>
     </div>
     <div class="trust-note">
-      <strong>保守识别</strong>
-      <span>无法可靠提取的元数据统一标记为“待确认”。</span>
+      <strong>可信知识资产</strong>
+      <span>原始提取值始终保留，人工修订不会覆盖或修改 PDF。</span>
     </div>
   </section>
 
@@ -26,7 +26,7 @@
         <label for="directory">本地目录完整路径</label>
         <input id="directory" name="directory" type="text" required
                placeholder="例如：D:\资料\产品手册" autocomplete="off">
-        <small>递归扫描目录及子目录中的 .pdf 文件；不会修改或复制原文件。</small>
+        <small>递归扫描 .pdf；保留人工修订值，不修改或复制原文件。</small>
       </div>
       <button type="submit">开始扫描</button>
     </form>
@@ -35,16 +35,16 @@
   <section class="panel" aria-labelledby="search-heading">
     <div class="panel-heading">
       <div>
-        <p class="eyebrow">02 · 检索</p>
-        <h2 id="search-heading">文档检索</h2>
+        <p class="eyebrow">02 · 检索与筛选</p>
+        <h2 id="search-heading">知识资产检索</h2>
       </div>
       {% if query %}<span class="result-count">{{ results|length }} 条页级结果</span>{% endif %}
     </div>
-    <form class="search-form" method="get" action="{{ url_for('main.index') }}">
+    <form class="search-form governance-filters" method="get" action="{{ url_for('main.index') }}">
       <div class="field search-field">
-        <label for="q">关键词</label>
+        <label for="q">关键词或产品别名</label>
         <input id="q" name="q" type="search" value="{{ query }}"
-               placeholder="输入故障码、功能名或原文片段">
+               placeholder="输入故障码、ACM2、航拍迷你二代或原文片段">
       </div>
       <div class="field">
         <label for="product_series">产品系列</label>
@@ -64,22 +64,58 @@
           {% endfor %}
         </select>
       </div>
+      <div class="field">
+        <label for="status">文档状态</label>
+        <select id="status" name="status">
+          <option value="">全部状态</option>
+          {% for value, label in document_status_labels.items() %}
+            <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="association">产品关联</label>
+        <select id="association" name="association">
+          <option value="">全部文档</option>
+          <option value="linked" {% if association == 'linked' %}selected{% endif %}>已关联</option>
+          <option value="unlinked" {% if association == 'unlinked' %}selected{% endif %}>未关联产品</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="product_id">规范产品</label>
+        <select id="product_id" name="product_id">
+          <option value="">全部产品</option>
+          {% for product in options.products %}
+            <option value="{{ product.id }}" {% if product.id|string == product_id %}selected{% endif %}>{{ product.standard_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
       <button type="submit">搜索</button>
-      {% if query or product_series or document_type %}
+      {% if query or product_series or document_type or status or association or product_id %}
         <a class="button-secondary" href="{{ url_for('main.index') }}">清除</a>
       {% endif %}
     </form>
   </section>
 
+  {% if alias_conflicts %}
+    <div class="alert alert-warning" role="alert">
+      别名“{{ query }}”同时匹配
+      {% for product in alias_conflicts %}<a href="{{ url_for('main.product_detail', product_id=product.id) }}">{{ product.standard_name }}</a>{% if not loop.last %}、{% endif %}{% endfor %}。
+      系统没有自动选择产品，请人工处理别名冲突。
+    </div>
+  {% endif %}
+
   {% if query %}
     <section class="results" aria-label="搜索结果">
       {% for result in results %}
-        <article class="result-card">
+        <article class="result-card result-status-{{ result.status }}">
           <div class="result-main">
             <div class="result-meta">
               <span class="badge">第 {{ result.page_number }} 页</span>
-              <span>{{ result.product_series }}</span>
+              <span class="status status-{{ result.status }}">{{ document_status_labels.get(result.status, result.status) }}</span>
+              <span>{{ result.canonical_product_name or '未关联产品' }}</span>
               <span>{{ result.document_type }}</span>
+              {% if result.alias_match %}<span class="badge badge-neutral">别名命中</span>{% endif %}
             </div>
             <h3><a href="{{ url_for('main.document_detail', document_id=result.id) }}">{{ result.title }}</a></h3>
             <p class="filename">{{ result.filename }}</p>
@@ -93,7 +129,7 @@
       {% else %}
         <div class="empty-state">
           <strong>没有找到匹配原文</strong>
-          <p>可以尝试缩短关键词，或清除产品和文档类型筛选。</p>
+          <p>可尝试产品别名、缩短关键词，或清除状态和关联筛选。</p>
         </div>
       {% endfor %}
     </section>
@@ -101,8 +137,8 @@
     <section class="panel table-panel" aria-labelledby="documents-heading">
       <div class="panel-heading">
         <div>
-          <p class="eyebrow">03 · 文档库</p>
-          <h2 id="documents-heading">已导入文档</h2>
+          <p class="eyebrow">03 · 资产目录</p>
+          <h2 id="documents-heading">文档知识资产</h2>
         </div>
         <span class="result-count">{{ documents|length }} 份</span>
       </div>
@@ -110,26 +146,17 @@
         <div class="table-scroll">
           <table>
             <thead>
-              <tr>
-                <th>文档</th>
-                <th>产品</th>
-                <th>类型</th>
-                <th>版本 / 语言</th>
-                <th>状态</th>
-                <th>页数</th>
-              </tr>
+              <tr><th>文档</th><th>规范产品</th><th>自由文本产品</th><th>类型</th><th>版本 / 语言</th><th>状态</th><th>页数</th></tr>
             </thead>
             <tbody>
               {% for document in documents %}
                 <tr>
-                  <td>
-                    <a class="document-title" href="{{ url_for('main.document_detail', document_id=document.id) }}">{{ document.title }}</a>
-                    <span class="subtle">{{ document.filename }}</span>
-                  </td>
+                  <td><a class="document-title" href="{{ url_for('main.document_detail', document_id=document.id) }}">{{ document.title }}</a><span class="subtle">{{ document.filename }}</span></td>
+                  <td>{% if document.canonical_product_id %}<a href="{{ url_for('main.product_detail', product_id=document.canonical_product_id) }}">{{ document.canonical_product_name }}</a>{% else %}<span class="unlinked">未关联</span>{% endif %}</td>
                   <td>{{ document.product_series }}<span class="subtle">{{ document.product_model }}</span></td>
                   <td>{{ document.document_type }}</td>
                   <td>{{ document.version }}<span class="subtle">{{ document.language }}</span></td>
-                  <td><span class="status status-{{ 'ready' if document.status == '已索引' else 'pending' }}">{{ document.status }}</span></td>
+                  <td><span class="status status-{{ document.status }}">{{ document_status_labels.get(document.status, document.status) }}</span></td>
                   <td>{{ document.page_count }}</td>
                 </tr>
               {% endfor %}
@@ -138,11 +165,10 @@
         </div>
       {% else %}
         <div class="empty-state">
-          <strong>文档库还是空的</strong>
-          <p>在上方输入包含 PDF 的本地目录，完成首次扫描。</p>
+          <strong>没有符合当前筛选的文档</strong>
+          <p>清除筛选，或在上方输入包含 PDF 的本地目录。</p>
         </div>
       {% endif %}
     </section>
   {% endif %}
 {% endblock %}
-

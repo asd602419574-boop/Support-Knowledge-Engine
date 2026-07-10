@@ -22,14 +22,15 @@ class DeduplicationTests(unittest.TestCase):
             first = import_directory(SAMPLE_DIR, database_path)
             second = import_directory(SAMPLE_DIR, database_path)
 
-            self.assertEqual(first.imported, 3)
+            sample_count = len(list(SAMPLE_DIR.glob("*.pdf")))
+            self.assertGreaterEqual(sample_count, 3)
+            self.assertEqual(first.imported, sample_count)
             self.assertEqual(second.imported, 0)
-            self.assertEqual(second.duplicates, 3)
+            self.assertEqual(second.duplicates, sample_count)
             with connect_database(database_path) as connection:
                 count = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-            self.assertEqual(count, 3)
+            self.assertEqual(count, sample_count)
 
 
 if __name__ == "__main__":
     unittest.main()
-

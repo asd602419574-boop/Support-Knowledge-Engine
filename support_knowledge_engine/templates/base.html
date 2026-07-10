@@ -19,6 +19,8 @@
       </a>
       <nav aria-label="主导航">
         <a href="{{ url_for('main.index') }}">文档与检索</a>
+        <a href="{{ url_for('main.products') }}">产品治理</a>
+        <a href="{{ url_for('main.audit_log') }}">审计日志</a>
         <a href="{{ url_for('main.logs') }}">导入日志</a>
       </nav>
     </div>
@@ -38,8 +40,7 @@
   </main>
 
   <footer class="shell site-footer">
-    仅在本机运行 · 原始 PDF 保持不变 · 搜索结果可追溯到文件和页码
+    仅在本机运行 · 当前操作者：{{ operator_name }} · 原始 PDF 保持不变
   </footer>
 </body>
 </html>
-

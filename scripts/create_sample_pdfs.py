@@ -88,6 +88,64 @@ SAMPLES = [
             ],
         ],
     },
+    {
+        "filename": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+        "title": "AeroCam Mini 2 Service Handbook",
+        "font": "Helvetica",
+        "pages": [
+            [
+                "Document Title: AeroCam Mini 2 Service Handbook",
+                "Product Series: AeroCam",
+                "Product Model: AeroCam Mini 2",
+                "Document Type: Service Handbook",
+                "Language: en-US",
+                "Version: 3.1",
+                "Release Date: 2026-06-12",
+                "Source URL: https://example.com/support/aerocam-mini-2/service",
+                "",
+                "A fictional compact aerial imaging product used only for governance tests.",
+                "Use the model identifier before selecting a maintenance procedure.",
+            ],
+            [
+                "Flight system maintenance",
+                "Run propeller calibration after replacing a motor or vibration damper.",
+                "Inspect the battery latch before enabling coastal wind compensation.",
+                "Record the calibration result together with this page number.",
+            ],
+            [
+                "Firmware diagnostics",
+                "Supported firmware range: 2.4.0 through 2.9.x.",
+                "Error code AM2-17 indicates that the gimbal home sensor needs inspection.",
+                "Do not apply procedures written for AeroCam Pro 2.",
+            ],
+        ],
+    },
+    {
+        "filename": "AeroCam-Pro-2_Service-Handbook_v4.0_en-US.pdf",
+        "title": "AeroCam Pro 2 Service Handbook",
+        "font": "Helvetica",
+        "pages": [
+            [
+                "Document Title: AeroCam Pro 2 Service Handbook",
+                "Product Series: AeroCam",
+                "Product Model: AeroCam Pro 2",
+                "Document Type: Service Handbook",
+                "Language: en-US",
+                "Version: 4.0",
+                "Release Date: 2026-06-20",
+                "Source URL: https://example.com/support/aerocam-pro-2/service",
+                "",
+                "This fictional professional model is intentionally easy to confuse with Mini 2.",
+                "Verify the full standard product name before servicing the payload system.",
+            ],
+            [
+                "Professional payload diagnostics",
+                "Error code AP2-90 indicates a dual-camera thermal alignment failure.",
+                "Inspect the payload bay connector and repeat optical axis verification.",
+                "Mini-series calibration instructions are not compatible with this model.",
+            ],
+        ],
+    },
 ]
 
 

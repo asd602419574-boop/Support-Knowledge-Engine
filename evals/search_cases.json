@@ -1,0 +1,132 @@
+[
+  {
+    "id": "xr-diagnostic-code",
+    "question": "量子灯塔",
+    "target_product": "星河路由器 XR-100",
+    "target_document": "星河路由器_XR-100_用户手册_v1.2_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 1,
+    "forbidden_products": [],
+    "notes": "中文故障短语"
+  },
+  {
+    "id": "xr-model",
+    "question": "XR-100",
+    "target_product": "星河路由器 XR-100",
+    "target_document": "星河路由器_XR-100_用户手册_v1.2_zh-CN.pdf",
+    "target_page": 1,
+    "expected_max_rank": 1,
+    "forbidden_products": [],
+    "notes": "型号检索"
+  },
+  {
+    "id": "nebula-calibration",
+    "question": "uplink calibration",
+    "target_product": "Nebula Switch NS-24",
+    "target_document": "Nebula-Switch_NS-24_Installation-Guide_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 1,
+    "forbidden_products": [],
+    "notes": "英文操作短语"
+  },
+  {
+    "id": "nebula-model",
+    "question": "NS-24",
+    "target_product": "Nebula Switch NS-24",
+    "target_document": "Nebula-Switch_NS-24_Installation-Guide_v2.0_en-US.pdf",
+    "target_page": 1,
+    "expected_max_rank": 1,
+    "forbidden_products": [],
+    "notes": "英文型号"
+  },
+  {
+    "id": "generic-echo",
+    "question": "琥珀回声",
+    "target_product": "通用实验设备",
+    "target_document": "通用故障排查指南_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 1,
+    "forbidden_products": [],
+    "notes": "待确认文档仍可检索"
+  },
+  {
+    "id": "mini-standard-name",
+    "question": "AeroCam Mini 2",
+    "target_product": "AeroCam Mini 2",
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 1,
+    "expected_max_rank": 1,
+    "forbidden_products": ["AeroCam Pro 2"],
+    "notes": "标准名称"
+  },
+  {
+    "id": "mini-short-name",
+    "question": "Aero Mini 2",
+    "target_product": "AeroCam Mini 2",
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 1,
+    "expected_max_rank": 1,
+    "forbidden_products": ["AeroCam Pro 2"],
+    "notes": "英文常见名称别名"
+  },
+  {
+    "id": "mini-abbreviation",
+    "question": "ACM2",
+    "target_product": "AeroCam Mini 2",
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 1,
+    "expected_max_rank": 1,
+    "forbidden_products": ["AeroCam Pro 2"],
+    "notes": "型号缩写"
+  },
+  {
+    "id": "mini-chinese-alias",
+    "question": "航拍迷你二代",
+    "target_product": "AeroCam Mini 2",
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 1,
+    "expected_max_rank": 1,
+    "forbidden_products": ["AeroCam Pro 2"],
+    "notes": "中文同义名称"
+  },
+  {
+    "id": "mini-propeller",
+    "question": "propeller calibration",
+    "target_product": "AeroCam Mini 2",
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 1,
+    "forbidden_products": ["AeroCam Pro 2"],
+    "notes": "容易混淆产品的维修步骤"
+  },
+  {
+    "id": "mini-error-code",
+    "question": "AM2-17",
+    "target_product": "AeroCam Mini 2",
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 3,
+    "expected_max_rank": 1,
+    "forbidden_products": ["AeroCam Pro 2"],
+    "notes": "Mini 错误码"
+  },
+  {
+    "id": "pro-error-code",
+    "question": "AP2-90",
+    "target_product": "AeroCam Pro 2",
+    "target_document": "AeroCam-Pro-2_Service-Handbook_v4.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 1,
+    "forbidden_products": ["AeroCam Mini 2"],
+    "notes": "Pro 错误码"
+  },
+  {
+    "id": "pro-thermal-alignment",
+    "question": "thermal alignment",
+    "target_product": "AeroCam Pro 2",
+    "target_document": "AeroCam-Pro-2_Service-Handbook_v4.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 1,
+    "forbidden_products": ["AeroCam Mini 2"],
+    "notes": "专业型号专属诊断短语"
+  }
+]

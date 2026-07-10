@@ -8,6 +8,7 @@ from pathlib import Path
 import fitz
 
 from .db import connect_database
+from .governance import EDITABLE_METADATA_FIELDS, match_document_product
 from .metadata import parse_metadata
 
 
@@ -69,22 +70,59 @@ def _save_document(connection, file_path: Path, sha256: str,
         "SELECT id FROM documents WHERE file_path = ?", (str(file_path),)
     ).fetchone()
 
+    product_match = match_document_product(connection, metadata)
+    system_status = "needs_review" if "待确认" in metadata.values() else "effective"
+    if product_match.status == "conflict":
+        system_status = "needs_review"
+    extracted_values = {**metadata, "status": system_status}
+
     if existing_path:
         document_id = existing_path["id"]
+        field_rows = connection.execute(
+            """SELECT field_name, revised_value FROM document_field_values
+               WHERE document_id = ?""",
+            (document_id,),
+        ).fetchall()
+        revised_values = {row["field_name"]: row["revised_value"] for row in field_rows}
+        effective_values: dict[str, str] = {}
+        for field_name in EDITABLE_METADATA_FIELDS:
+            extracted_value = extracted_values[field_name]
+            connection.execute(
+                """INSERT INTO document_field_values
+                   (document_id, field_name, extracted_value, revised_value, updated_at)
+                   VALUES (?, ?, ?, NULL, ?)
+                   ON CONFLICT(document_id, field_name) DO UPDATE SET
+                       extracted_value = excluded.extracted_value,
+                       updated_at = excluded.updated_at""",
+                (document_id, field_name, extracted_value, utc_now()),
+            )
+            effective_values[field_name] = revised_values.get(field_name) or extracted_value
+
+        current = connection.execute(
+            "SELECT canonical_product_id, status_note FROM documents WHERE id = ?", (document_id,)
+        ).fetchone()
+        canonical_product_id = current["canonical_product_id"]
+        if canonical_product_id is None and product_match.status == "matched":
+            canonical_product_id = product_match.product_id
+        status_note = current["status_note"]
+        if product_match.status == "conflict" and not status_note:
+            status_note = "产品别名匹配冲突，需人工关联。"
+
         connection.execute("DELETE FROM page_fts WHERE document_id = ?", (document_id,))
         connection.execute("DELETE FROM pages WHERE document_id = ?", (document_id,))
         connection.execute(
             """UPDATE documents SET filename = ?, title = ?, product_series = ?,
                product_model = ?, document_type = ?, language = ?, version = ?,
                release_date = ?, source_url = ?, sha256 = ?, imported_at = ?,
-               status = ?, page_count = ?, error_reason = NULL WHERE id = ?""",
+               status = ?, page_count = ?, error_reason = NULL,
+               canonical_product_id = ?, status_note = ? WHERE id = ?""",
             (
-                file_path.name, metadata["title"], metadata["product_series"],
-                metadata["product_model"], metadata["document_type"],
-                metadata["language"], metadata["version"], metadata["release_date"],
-                metadata["source_url"], sha256, utc_now(),
-                "待确认" if "待确认" in metadata.values() else "已索引",
-                len(pages), document_id,
+                file_path.name, effective_values["title"], effective_values["product_series"],
+                effective_values["product_model"], effective_values["document_type"],
+                effective_values["language"], effective_values["version"],
+                effective_values["release_date"], effective_values["source_url"],
+                sha256, utc_now(), effective_values["status"], len(pages),
+                canonical_product_id, status_note, document_id,
             ),
         )
     else:
@@ -99,11 +137,27 @@ def _save_document(connection, file_path: Path, sha256: str,
                 metadata["product_series"], metadata["product_model"],
                 metadata["document_type"], metadata["language"], metadata["version"],
                 metadata["release_date"], metadata["source_url"], sha256,
-                utc_now(), "待确认" if "待确认" in metadata.values() else "已索引",
-                len(pages),
+                utc_now(), system_status, len(pages),
             ),
         )
         document_id = cursor.lastrowid
+        for field_name in EDITABLE_METADATA_FIELDS:
+            connection.execute(
+                """INSERT INTO document_field_values
+                   (document_id, field_name, extracted_value, revised_value, updated_at)
+                   VALUES (?, ?, ?, NULL, ?)""",
+                (document_id, field_name, extracted_values[field_name], utc_now()),
+            )
+        if product_match.status == "matched":
+            connection.execute(
+                "UPDATE documents SET canonical_product_id = ? WHERE id = ?",
+                (product_match.product_id, document_id),
+            )
+        elif product_match.status == "conflict":
+            connection.execute(
+                "UPDATE documents SET status_note = ? WHERE id = ?",
+                ("产品别名匹配冲突，需人工关联。", document_id),
+            )
 
     for page_number, content in enumerate(pages, start=1):
         connection.execute(

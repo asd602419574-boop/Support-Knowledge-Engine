@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}审计日志 · Support Knowledge Engine{% endblock %}
+{% block content %}
+  <section class="page-title"><p class="eyebrow">不可变更记录</p><h1>全局审计日志</h1><p>人工修改只能新增审计记录；普通界面不提供编辑或删除入口。</p></section>
+  <section class="panel">
+    <form class="search-form" method="get" action="{{ url_for('main.audit_log') }}">
+      <div class="field"><label for="object_type">对象类型</label><select id="object_type" name="object_type"><option value="">全部</option>{% for value in options.object_types %}<option value="{{ value }}" {% if object_type == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="field_name">修改字段</label><select id="field_name" name="field_name"><option value="">全部</option>{% for value in options.field_names %}<option value="{{ value }}" {% if field_name == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="operator">操作者</label><select id="operator" name="operator"><option value="">全部</option>{% for value in options.operators %}<option value="{{ value }}" {% if operator == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+      <button type="submit">筛选</button>{% if object_type or field_name or operator %}<a class="button-secondary" href="{{ url_for('main.audit_log') }}">清除</a>{% endif %}
+    </form>
+  </section>
+  <section class="panel table-panel">
+    <div class="panel-heading"><div><p class="eyebrow">修改明细</p><h2>审计记录</h2></div><span class="result-count">{{ entries|length }} 条</span></div>
+    {% if entries %}<div class="table-scroll"><table><thead><tr><th>时间</th><th>对象</th><th>操作</th><th>字段</th><th>修改前</th><th>修改后</th><th>原因</th><th>操作者</th></tr></thead><tbody>{% for entry in entries %}<tr><td>{{ entry.changed_at }}</td><td>{{ entry.object_type }} #{{ entry.object_id }}</td><td>{{ entry.operation_type }}</td><td>{{ entry.field_name }}</td><td class="audit-value">{{ entry.before_value or '—' }}</td><td class="audit-value">{{ entry.after_value or '—' }}</td><td>{{ entry.reason }}</td><td>{{ entry.operator }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state"><strong>没有符合筛选条件的审计记录</strong><p>人工编辑文档、产品或别名后会自动写入。</p></div>{% endif %}
+  </section>
+{% endblock %}
