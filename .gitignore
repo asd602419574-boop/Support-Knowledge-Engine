@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 instance/
 tmp/
+downloads/
+backups/
+*.sqlite3
+*.sqlite3.json
 .coverage
 htmlcov/
-

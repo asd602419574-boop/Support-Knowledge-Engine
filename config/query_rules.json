@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "symptom_synonyms": {
+    "开不了机": "无法开机",
+    "不能开机": "无法开机",
+    "no power": "power failure",
+    "连不上": "连接失败",
+    "断连": "连接失败",
+    "画面抖": "影像抖动",
+    "gimbal shake": "gimbal vibration",
+    "升级不了": "固件升级失败"
+  },
+  "spelling_corrections": {
+    "calbration": "calibration",
+    "firmwere": "firmware",
+    "conection": "connection",
+    "固件升极": "固件升级",
+    "校准失敗": "校准失败"
+  },
+  "stop_punctuation": "，。！？；：、,.!?;:()[]{}<>\"'`~@#$%^&*=+|\\/"
+}

@@ -53,5 +53,20 @@
       </div>
     {% endfor %}
   </section>
-{% endblock %}
 
+  <section class="panel table-panel" aria-labelledby="source-fetch-heading">
+    <div class="panel-heading"><div><p class="eyebrow">受控资料清单</p><h2 id="source-fetch-heading">获取记录</h2></div><span class="result-count">最近 {{ source_fetches|length }} 条</span></div>
+    {% if source_fetches %}
+      <div class="table-scroll"><table>
+        <thead><tr><th>结果</th><th>来源 ID / 请求</th><th>HTTP</th><th>文件</th><th>时间 / 错误</th></tr></thead>
+        <tbody>{% for item in source_fetches %}<tr>
+          <td><span class="status status-{{ 'ready' if item.result in ('downloaded', 'copied', 'checked') else 'pending' }}">{{ item.result }}{% if item.dry_run %} · dry-run{% endif %}</span></td>
+          <td><strong>{{ item.source_id }}</strong><span class="subtle path-value">{{ item.request_url or item.local_source_path }}</span></td>
+          <td>{{ item.http_status or '—' }}<span class="subtle">{{ item.content_type or '—' }}</span></td>
+          <td>{{ item.file_size or '—' }} 字节<span class="subtle hash compact">{{ item.sha256 or '—' }}</span></td>
+          <td>{{ item.fetched_at }}{% if item.error_reason %}<span class="subtle inline-error">{{ item.error_reason }}</span>{% endif %}</td>
+        </tr>{% endfor %}</tbody>
+      </table></div>
+    {% else %}<div class="empty-state compact-empty"><strong>尚无受控获取记录</strong><p>使用资料清单命令后，dry-run 和实际获取都会显示在此处。</p></div>{% endif %}
+  </section>
+{% endblock %}

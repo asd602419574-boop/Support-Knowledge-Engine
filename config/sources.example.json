@@ -1,0 +1,24 @@
+{
+  "sources": [
+    {
+      "source_id": "aerocam-mini-2-local-manual",
+      "product_name": "AeroCam Mini 2",
+      "document_type": "Service Handbook",
+      "local_path": "D:\\允许导入的公开资料\\AeroCam-Mini-2-Handbook.pdf",
+      "language": "en-US",
+      "expected_filename": "AeroCam-Mini-2-Handbook.pdf",
+      "enabled": false,
+      "notes": "示例默认禁用；启用前请确认文件来源和授权。"
+    },
+    {
+      "source_id": "public-example-pdf",
+      "product_name": "Example Product",
+      "document_type": "User Manual",
+      "url": "https://example.com/explicit-file.pdf",
+      "language": "en-US",
+      "expected_filename": "explicit-file.pdf",
+      "enabled": false,
+      "notes": "仅演示单文件 URL；程序不会发现或访问页面中的其他链接。"
+    }
+  ]
+}

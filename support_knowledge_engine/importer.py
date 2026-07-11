@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -173,6 +174,7 @@ def _save_document(connection, file_path: Path, sha256: str,
 def import_directory(directory: str | Path, database_path: str | Path) -> ImportSummary:
     requested_path = Path(str(directory).strip()).expanduser()
     imported = duplicates = failed = 0
+    started_clock = time.perf_counter()
 
     with connect_database(database_path) as connection:
         cursor = connection.execute(
@@ -194,9 +196,9 @@ def import_directory(directory: str | Path, database_path: str | Path) -> Import
         except Exception as exc:
             message = f"目录扫描失败：{exc}"
             connection.execute(
-                """UPDATE import_runs SET finished_at = ?, status = ?, error_message = ?
+                """UPDATE import_runs SET finished_at = ?, status = ?, error_message = ?, duration_ms = ?
                    WHERE id = ?""",
-                (utc_now(), "失败", message, run_id),
+                (utc_now(), "失败", message, (time.perf_counter() - started_clock) * 1000, run_id),
             )
             connection.commit()
             raise ValueError(message) from exc
@@ -231,8 +233,9 @@ def import_directory(directory: str | Path, database_path: str | Path) -> Import
         status = "完成" if failed == 0 else "部分失败"
         connection.execute(
             """UPDATE import_runs SET finished_at = ?, status = ?, discovered_count = ?,
-               imported_count = ?, duplicate_count = ?, failed_count = ? WHERE id = ?""",
-            (utc_now(), status, len(pdf_files), imported, duplicates, failed, run_id),
+               imported_count = ?, duplicate_count = ?, failed_count = ?, duration_ms = ? WHERE id = ?""",
+            (utc_now(), status, len(pdf_files), imported, duplicates, failed,
+             (time.perf_counter() - started_clock) * 1000, run_id),
         )
         connection.commit()
 
