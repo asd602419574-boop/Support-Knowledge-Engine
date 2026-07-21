@@ -6,4 +6,5 @@ instance/
 tmp/
 .coverage
 htmlcov/
+tmp-pip.*.log
 

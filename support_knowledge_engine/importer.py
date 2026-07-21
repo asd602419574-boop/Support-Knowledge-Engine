@@ -5,11 +5,25 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import fitz
-
 from .db import connect_database
+from .dji_catalog import load_dji_catalog
 from .governance import EDITABLE_METADATA_FIELDS, match_document_product
 from .metadata import parse_metadata
+
+
+MAX_IN_MEMORY_PDF_BYTES = 64 * 1024 * 1024
+
+
+def _load_pdf_backend():
+    try:
+        import fitz
+    except (ImportError, OSError) as exc:
+        raise RuntimeError(
+            "PyMuPDF 无法加载，Windows 应用程序控制策略可能阻止了其原生 DLL。"
+            "现有知识库仍可检索，但新增 PDF 暂时无法解析；请联系管理员放行 "
+            "PyMuPDF，或在允许加载该组件的环境中执行导入。"
+        ) from exc
+    return fitz
 
 
 @dataclass(frozen=True)
@@ -34,11 +48,20 @@ def calculate_sha256(file_path: str | Path) -> str:
 
 
 def extract_pdf(file_path: str | Path) -> tuple[dict[str, str], list[str]]:
+    fitz = _load_pdf_backend()
     pages: list[str] = []
+    path = Path(file_path)
     # Opening from an already-read byte stream avoids a PyMuPDF file-handle leak
     # on Windows when a malformed PDF fails during document construction.
-    pdf_bytes = Path(file_path).read_bytes()
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
+    if path.stat().st_size <= MAX_IN_MEMORY_PDF_BYTES:
+        pdf_bytes = path.read_bytes()
+        document_source = fitz.open(stream=pdf_bytes, filetype="pdf")
+    else:
+        # Real vendor manuals can be hundreds of MB. Opening large files by path
+        # prevents a second full-size in-memory copy during text extraction.
+        document_source = fitz.open(str(path), filetype="pdf")
+
+    with document_source as document:
         if document.needs_pass:
             raise ValueError("PDF 已加密，无法读取")
         pdf_metadata = document.metadata or {}
@@ -65,7 +88,8 @@ def _record_item(connection, run_id: int, file_path: Path, sha256: str | None,
 
 
 def _save_document(connection, file_path: Path, sha256: str,
-                   metadata: dict[str, str], pages: list[str]) -> None:
+                   metadata: dict[str, str], pages: list[str],
+                   authority_level: str = "reference") -> None:
     existing_path = connection.execute(
         "SELECT id FROM documents WHERE file_path = ?", (str(file_path),)
     ).fetchone()
@@ -115,14 +139,14 @@ def _save_document(connection, file_path: Path, sha256: str,
                product_model = ?, document_type = ?, language = ?, version = ?,
                release_date = ?, source_url = ?, sha256 = ?, imported_at = ?,
                status = ?, page_count = ?, error_reason = NULL,
-               canonical_product_id = ?, status_note = ? WHERE id = ?""",
+               canonical_product_id = ?, status_note = ?, authority_level = ? WHERE id = ?""",
             (
                 file_path.name, effective_values["title"], effective_values["product_series"],
                 effective_values["product_model"], effective_values["document_type"],
                 effective_values["language"], effective_values["version"],
                 effective_values["release_date"], effective_values["source_url"],
                 sha256, utc_now(), effective_values["status"], len(pages),
-                canonical_product_id, status_note, document_id,
+                canonical_product_id, status_note, authority_level, document_id,
             ),
         )
     else:
@@ -130,14 +154,14 @@ def _save_document(connection, file_path: Path, sha256: str,
             """INSERT INTO documents
                (file_path, filename, title, product_series, product_model,
                 document_type, language, version, release_date, source_url,
-                sha256, imported_at, status, page_count, error_reason)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
+                sha256, imported_at, status, page_count, error_reason, authority_level)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
             (
                 str(file_path), file_path.name, metadata["title"],
                 metadata["product_series"], metadata["product_model"],
                 metadata["document_type"], metadata["language"], metadata["version"],
                 metadata["release_date"], metadata["source_url"], sha256,
-                utc_now(), system_status, len(pages),
+                utc_now(), system_status, len(pages), authority_level,
             ),
         )
         document_id = cursor.lastrowid
@@ -186,6 +210,7 @@ def import_directory(directory: str | Path, database_path: str | Path) -> Import
             root = requested_path.resolve(strict=True)
             if not root.is_dir():
                 raise ValueError("指定路径不是目录")
+            catalog = load_dji_catalog(root)
             pdf_files = sorted(
                 (path.resolve() for path in root.rglob("*")
                  if path.is_file() and path.suffix.lower() == ".pdf"),
@@ -218,8 +243,22 @@ def import_directory(directory: str | Path, database_path: str | Path) -> Import
                     continue
 
                 metadata, pages = extract_pdf(file_path)
+                catalog_metadata = (
+                    catalog.documents_by_path.get(file_path) if catalog is not None else None
+                )
+                authority_level = "reference"
+                if catalog_metadata is not None:
+                    metadata = {**metadata, **catalog_metadata}
+                    authority_level = "authoritative"
                 with connection:
-                    _save_document(connection, file_path, file_hash, metadata, pages)
+                    _save_document(
+                        connection,
+                        file_path,
+                        file_hash,
+                        metadata,
+                        pages,
+                        authority_level,
+                    )
                     _record_item(connection, run_id, file_path, file_hash, "已导入", "解析并建立索引成功")
                 imported += 1
             except Exception as exc:
