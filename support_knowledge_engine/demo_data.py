@@ -38,6 +38,34 @@ DEMO_PRODUCTS = (
             ("航拍专业二代", "chinese_name"),
         ),
     },
+    {
+        "standard_name": "AeroCam Mini 3",
+        "product_series": "AeroCam",
+        "status": "active",
+        "aliases": (
+            ("Aero Mini 3", "english_name"),
+            ("ACM3", "abbreviation"),
+            ("航拍迷你三代", "chinese_name"),
+        ),
+    },
+    {
+        "standard_name": "AeroCam Pro 3",
+        "product_series": "AeroCam",
+        "status": "active",
+        "aliases": (
+            ("Aero Pro 3", "english_name"),
+            ("ACP3", "abbreviation"),
+            ("航拍专业三代", "chinese_name"),
+        ),
+    },
+)
+
+
+SUPERSESSION_PAIRS = (
+    ("AeroCam-Mini-2_Service-Handbook_v2.0_en-US.pdf", "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf"),
+    ("AeroCam-Pro-2_Service-Handbook_v3.0_en-US.pdf", "AeroCam-Pro-2_Service-Handbook_v4.0_en-US.pdf"),
+    ("AeroCam-Mini-3_Service-Handbook_v1.0_en-US.pdf", "AeroCam-Mini-3_Service-Handbook_v2.0_en-US.pdf"),
+    ("AeroCam-Pro-3_Service-Handbook_v1.0_en-US.pdf", "AeroCam-Pro-3_Service-Handbook_v2.0_en-US.pdf"),
 )
 
 
@@ -97,9 +125,28 @@ def seed_demo_data(
                 )
                 linked_documents += 1
 
+        supersession_count = 0
+        for old_filename, new_filename in SUPERSESSION_PAIRS:
+            old = connection.execute("SELECT id FROM documents WHERE filename = ?", (old_filename,)).fetchone()
+            new = connection.execute("SELECT id FROM documents WHERE filename = ?", (new_filename,)).fetchone()
+            if old and new:
+                connection.execute(
+                    """UPDATE documents SET status = 'superseded', superseded_by_document_id = ?,
+                       expiration_date = COALESCE(expiration_date, '2026-06-30'),
+                       status_note = '虚构语料版本替代关系' WHERE id = ?""",
+                    (new["id"], old["id"]),
+                )
+                connection.execute(
+                    """UPDATE documents SET status = 'effective', effective_date = COALESCE(effective_date, release_date)
+                       WHERE id = ?""",
+                    (new["id"],),
+                )
+                supersession_count += 1
+
         counts = {
             "products": connection.execute("SELECT COUNT(*) FROM products").fetchone()[0],
             "aliases": connection.execute("SELECT COUNT(*) FROM product_aliases").fetchone()[0],
             "linked_documents": linked_documents,
+            "supersession_relationships": supersession_count,
         }
     return counts

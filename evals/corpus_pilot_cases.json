@@ -1,0 +1,1898 @@
+[
+  {
+    "id": "active-01-fault",
+    "category": "fault_without_product",
+    "question": "gimbal home sensor",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 3,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-01-abbr",
+    "category": "product_abbreviation",
+    "question": "ACM2 gimbal home sensor",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 3,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-01-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍迷你二代，gimbal home sensor",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 3,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-02-fault",
+    "category": "fault_without_product",
+    "question": "battery handshake AM2-31",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Release-Notes_v3.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-02-abbr",
+    "category": "product_abbreviation",
+    "question": "ACM2 battery handshake AM2-31",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Release-Notes_v3.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-02-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍迷你二代，battery handshake AM2-31",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Release-Notes_v3.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-03-fault",
+    "category": "fault_without_product",
+    "question": "折叠支架锁扣",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_配件指南_v1.1_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-03-abbr",
+    "category": "product_abbreviation",
+    "question": "ACM2 折叠支架锁扣",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_配件指南_v1.1_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-03-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍迷你二代，折叠支架锁扣",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_配件指南_v1.1_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-04-fault",
+    "category": "fault_without_product",
+    "question": "首次配对蓝灯",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "needs_review"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-04-abbr",
+    "category": "product_abbreviation",
+    "question": "ACM2 首次配对蓝灯",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "needs_review"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-04-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍迷你二代，首次配对蓝灯",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "needs_review"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-05-fault",
+    "category": "fault_without_product",
+    "question": "dual-camera thermal alignment",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Service-Handbook_v4.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-05-abbr",
+    "category": "product_abbreviation",
+    "question": "ACP2 dual-camera thermal alignment",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Service-Handbook_v4.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-05-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍专业二代，dual-camera thermal alignment",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Service-Handbook_v4.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-06-fault",
+    "category": "fault_without_product",
+    "question": "payload firmware AP2-44",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Release-Notes_v4.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-06-abbr",
+    "category": "product_abbreviation",
+    "question": "ACP2 payload firmware AP2-44",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Release-Notes_v4.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-06-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍专业二代，payload firmware AP2-44",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Release-Notes_v4.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-07-fault",
+    "category": "fault_without_product",
+    "question": "双镜头保护框",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_配件指南_v2.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-07-abbr",
+    "category": "product_abbreviation",
+    "question": "ACP2 双镜头保护框",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_配件指南_v2.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-07-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍专业二代，双镜头保护框",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_配件指南_v2.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-08-fault",
+    "category": "fault_without_product",
+    "question": "载荷舱解锁",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "needs_review"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-08-abbr",
+    "category": "product_abbreviation",
+    "question": "ACP2 载荷舱解锁",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "needs_review"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-08-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍专业二代，载荷舱解锁",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "needs_review"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-09-fault",
+    "category": "fault_without_product",
+    "question": "compass pulse AM3-18",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-09-abbr",
+    "category": "product_abbreviation",
+    "question": "ACM3 compass pulse AM3-18",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-09-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍迷你三代，compass pulse AM3-18",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-10-fault",
+    "category": "fault_without_product",
+    "question": "quiet rotor profile AM3-22",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Release-Notes_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-10-abbr",
+    "category": "product_abbreviation",
+    "question": "ACM3 quiet rotor profile AM3-22",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Release-Notes_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-10-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍迷你三代，quiet rotor profile AM3-22",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Release-Notes_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-11-fault",
+    "category": "fault_without_product",
+    "question": "磁吸护罩定位点",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_配件指南_v1.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-11-abbr",
+    "category": "product_abbreviation",
+    "question": "ACM3 磁吸护罩定位点",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_配件指南_v1.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-11-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍迷你三代，磁吸护罩定位点",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_配件指南_v1.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-12-fault",
+    "category": "fault_without_product",
+    "question": "开机蜂鸣两次",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "needs_review"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-12-abbr",
+    "category": "product_abbreviation",
+    "question": "ACM3 开机蜂鸣两次",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "needs_review"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-12-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍迷你三代，开机蜂鸣两次",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "needs_review"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-13-fault",
+    "category": "fault_without_product",
+    "question": "optical sync AP3-20",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-13-abbr",
+    "category": "product_abbreviation",
+    "question": "ACP3 optical sync AP3-20",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-13-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍专业三代，optical sync AP3-20",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-14-fault",
+    "category": "fault_without_product",
+    "question": "dual codec profile AP3-25",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Release-Notes_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-14-abbr",
+    "category": "product_abbreviation",
+    "question": "ACP3 dual codec profile AP3-25",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Release-Notes_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-14-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍专业三代，dual codec profile AP3-25",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Release-Notes_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-15-fault",
+    "category": "fault_without_product",
+    "question": "专业云台扩展座",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_配件指南_v1.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-15-abbr",
+    "category": "product_abbreviation",
+    "question": "ACP3 专业云台扩展座",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_配件指南_v1.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-15-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍专业三代，专业云台扩展座",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_配件指南_v1.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "active-16-fault",
+    "category": "fault_without_product",
+    "question": "双击模式旋钮",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": false,
+    "notes": "只描述故障或部件"
+  },
+  {
+    "id": "active-16-abbr",
+    "category": "product_abbreviation",
+    "question": "ACP3 双击模式旋钮",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "缩写与故障词分离"
+  },
+  {
+    "id": "active-16-mixed",
+    "category": "chinese_english_mixed",
+    "question": "航拍专业三代，双击模式旋钮",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_快速入门_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": "中英文混合和全角标点"
+  },
+  {
+    "id": "outdated-01-plain",
+    "category": "outdated_only",
+    "question": "legacy horizon drift reset",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": false,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-01-abbr",
+    "category": "outdated_only",
+    "question": "ACM2 legacy horizon drift reset",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": true,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-01-mixed",
+    "category": "outdated_only",
+    "question": "航拍迷你二代 legacy horizon drift reset",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": true,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-02-plain",
+    "category": "outdated_only",
+    "question": "legacy thermal alignment AP2-71",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Service-Handbook_v3.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": false,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-02-abbr",
+    "category": "outdated_only",
+    "question": "ACP2 legacy thermal alignment AP2-71",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Service-Handbook_v3.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": true,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-02-mixed",
+    "category": "outdated_only",
+    "question": "航拍专业二代 legacy thermal alignment AP2-71",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Service-Handbook_v3.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": true,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-03-plain",
+    "category": "outdated_only",
+    "question": "legacy compass pulse AM3-08",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Service-Handbook_v1.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": false,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-03-abbr",
+    "category": "outdated_only",
+    "question": "ACM3 legacy compass pulse AM3-08",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Service-Handbook_v1.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": true,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-03-mixed",
+    "category": "outdated_only",
+    "question": "航拍迷你三代 legacy compass pulse AM3-08",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Service-Handbook_v1.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": true,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-04-plain",
+    "category": "outdated_only",
+    "question": "legacy optical sync AP3-10",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Service-Handbook_v1.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": false,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-04-abbr",
+    "category": "outdated_only",
+    "question": "ACP3 legacy optical sync AP3-10",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Service-Handbook_v1.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": true,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "outdated-04-mixed",
+    "category": "outdated_only",
+    "question": "航拍专业三代 legacy optical sync AP3-10",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Service-Handbook_v1.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "superseded"
+    ],
+    "alias_expected": true,
+    "notes": "只能由已被替代文档回答，必须给出过期提示"
+  },
+  {
+    "id": "no-answer-01",
+    "category": "no_answer",
+    "question": "AeroCam Mini 2 quantum toaster error",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-02",
+    "category": "no_answer",
+    "question": "ACP2 underwater coffee mode",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-03",
+    "category": "no_answer",
+    "question": "ACM3 teleport motor code Z-999",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-04",
+    "category": "no_answer",
+    "question": "航拍专业三代 月球网络认证失败",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-05",
+    "category": "no_answer",
+    "question": "不存在的产品 XQ-404 无法开机",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-06",
+    "category": "no_answer",
+    "question": "ACM2 not AP2-90 but unknown code",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-07",
+    "category": "no_answer",
+    "question": "如何绕过验证码抓取整站",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-08",
+    "category": "no_answer",
+    "question": "customer serial 0000 secret case",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-09",
+    "category": "no_answer",
+    "question": "AeroCam Mini 9 battery",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-10",
+    "category": "no_answer",
+    "question": "ACP3 orange nebula alarm",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-11",
+    "category": "no_answer",
+    "question": "Mini 2 与 Pro 3 同时出现但没有故障证据",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "no-answer-12",
+    "category": "no_answer",
+    "question": "完全无关的天气查询",
+    "target_product": null,
+    "allowed_products": [],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": null,
+    "target_page": null,
+    "expected_max_rank": 3,
+    "should_return_answer": false,
+    "allowed_document_statuses": [],
+    "alias_expected": false,
+    "notes": "不存在答案时不得填充低相关结果"
+  },
+  {
+    "id": "typo-calibration",
+    "category": "common_typo",
+    "question": "ACM2 calbration",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "typo-firmware",
+    "category": "common_typo",
+    "question": "ACM2 firmwere diagnostics",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 3,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "fullwidth-model",
+    "category": "fullwidth",
+    "question": "ＡＣＭ３ compass pulse AM3-18",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "accessory-host-1",
+    "category": "accessory_vs_host",
+    "question": "ACM2 折叠支架锁扣",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_配件指南_v1.1_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "accessory-host-2",
+    "category": "accessory_vs_host",
+    "question": "ACP2 双镜头保护框",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_配件指南_v2.0_zh-CN.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "similar-mini2-mini3",
+    "category": "similar_model",
+    "question": "ACM2 battery handshake AM2-31",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Release-Notes_v3.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "similar-pro2-pro3",
+    "category": "similar_model",
+    "question": "ACP3 dual codec profile AP3-25",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Release-Notes_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "multi-fault",
+    "category": "multi_fault",
+    "question": "ACM3 compass pulse AM3-18",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "negative-specific",
+    "category": "negative_question",
+    "question": "ACM2 gimbal home sensor",
+    "target_product": "AeroCam Mini 2",
+    "allowed_products": [
+      "AeroCam Mini 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 3",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf",
+    "target_page": 3,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "casefold",
+    "category": "casefold",
+    "question": "acp2 PAYLOAD FIRMWARE ap2-44",
+    "target_product": "AeroCam Pro 2",
+    "allowed_products": [
+      "AeroCam Pro 2"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Pro-2_Release-Notes_v4.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "spaces",
+    "category": "whitespace",
+    "question": "  ACM3   quiet rotor profile AM3-22  ",
+    "target_product": "AeroCam Mini 3",
+    "allowed_products": [
+      "AeroCam Mini 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Pro 2",
+      "AeroCam Pro 3"
+    ],
+    "target_document": "AeroCam-Mini-3_Release-Notes_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  },
+  {
+    "id": "punctuation",
+    "category": "punctuation",
+    "question": "ACP3：optical sync AP3-20！",
+    "target_product": "AeroCam Pro 3",
+    "allowed_products": [
+      "AeroCam Pro 3"
+    ],
+    "forbidden_products": [
+      "AeroCam Mini 2",
+      "AeroCam Mini 3",
+      "AeroCam Pro 2"
+    ],
+    "target_document": "AeroCam-Pro-3_Service-Handbook_v2.0_en-US.pdf",
+    "target_page": 2,
+    "expected_max_rank": 3,
+    "should_return_answer": true,
+    "allowed_document_statuses": [
+      "effective"
+    ],
+    "alias_expected": true,
+    "notes": ""
+  }
+]

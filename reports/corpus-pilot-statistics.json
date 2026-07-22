@@ -1,0 +1,31 @@
+{
+  "document_count": 23,
+  "page_count": 47,
+  "fts_entry_count": 47,
+  "product_count": 4,
+  "document_type_distribution": {
+    "Service Handbook": 8,
+    "Release Notes": 4,
+    "快速入门": 4,
+    "配件指南": 4,
+    "Installation Guide": 1,
+    "故障排查指南": 1,
+    "用户手册": 1
+  },
+  "status_distribution": {
+    "effective": 15,
+    "needs_review": 4,
+    "superseded": 4
+  },
+  "missing_field_count": 5,
+  "missing_fields": {
+    "product_model": 1,
+    "release_date": 1,
+    "source_url": 2,
+    "version": 1
+  },
+  "duplicate_file_count": 2,
+  "parse_failure_count": 0,
+  "average_import_seconds": 0.004768839130480521,
+  "database_size_bytes": 299008
+}

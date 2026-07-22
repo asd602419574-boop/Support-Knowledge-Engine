@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -194,9 +195,64 @@ def _save_document(connection, file_path: Path, sha256: str,
         )
 
 
+def _apply_authoritative_metadata(connection, document_id: int,
+                                  metadata: dict[str, str]) -> None:
+    current = connection.execute(
+        "SELECT canonical_product_id, status_note FROM documents WHERE id = ?",
+        (document_id,),
+    ).fetchone()
+    if current is None:
+        raise ValueError("重复文档不存在，无法应用权威元数据")
+
+    revised_rows = connection.execute(
+        """SELECT field_name, revised_value FROM document_field_values
+           WHERE document_id = ?""",
+        (document_id,),
+    ).fetchall()
+    revised_values = {row["field_name"]: row["revised_value"] for row in revised_rows}
+    effective_values: dict[str, str] = {}
+    for field_name in EDITABLE_METADATA_FIELDS:
+        if field_name == "status":
+            continue
+        extracted_value = metadata[field_name]
+        connection.execute(
+            """INSERT INTO document_field_values
+               (document_id, field_name, extracted_value, revised_value, updated_at)
+               VALUES (?, ?, ?, NULL, ?)
+               ON CONFLICT(document_id, field_name) DO UPDATE SET
+                   extracted_value = excluded.extracted_value,
+                   updated_at = excluded.updated_at""",
+            (document_id, field_name, extracted_value, utc_now()),
+        )
+        effective_values[field_name] = revised_values.get(field_name) or extracted_value
+
+    product_match = match_document_product(connection, metadata)
+    canonical_product_id = current["canonical_product_id"]
+    status_note = current["status_note"]
+    if canonical_product_id is None and product_match.status == "matched":
+        canonical_product_id = product_match.product_id
+    elif product_match.status == "conflict" and not status_note:
+        status_note = "产品别名匹配冲突，需人工关联。"
+
+    connection.execute(
+        """UPDATE documents SET title = ?, product_series = ?, product_model = ?,
+           document_type = ?, language = ?, version = ?, release_date = ?,
+           source_url = ?, canonical_product_id = ?, status_note = ?,
+           authority_level = 'authoritative' WHERE id = ?""",
+        (
+            effective_values["title"], effective_values["product_series"],
+            effective_values["product_model"], effective_values["document_type"],
+            effective_values["language"], effective_values["version"],
+            effective_values["release_date"], effective_values["source_url"],
+            canonical_product_id, status_note, document_id,
+        ),
+    )
+
+
 def import_directory(directory: str | Path, database_path: str | Path) -> ImportSummary:
     requested_path = Path(str(directory).strip()).expanduser()
     imported = duplicates = failed = 0
+    started_clock = time.perf_counter()
 
     with connect_database(database_path) as connection:
         cursor = connection.execute(
@@ -219,9 +275,9 @@ def import_directory(directory: str | Path, database_path: str | Path) -> Import
         except Exception as exc:
             message = f"目录扫描失败：{exc}"
             connection.execute(
-                """UPDATE import_runs SET finished_at = ?, status = ?, error_message = ?
+                """UPDATE import_runs SET finished_at = ?, status = ?, error_message = ?, duration_ms = ?
                    WHERE id = ?""",
-                (utc_now(), "失败", message, run_id),
+                (utc_now(), "失败", message, (time.perf_counter() - started_clock) * 1000, run_id),
             )
             connection.commit()
             raise ValueError(message) from exc
@@ -230,22 +286,26 @@ def import_directory(directory: str | Path, database_path: str | Path) -> Import
             file_hash: str | None = None
             try:
                 file_hash = calculate_sha256(file_path)
-                duplicate = connection.execute(
-                    "SELECT filename FROM documents WHERE sha256 = ?", (file_hash,)
-                ).fetchone()
-                if duplicate:
-                    duplicates += 1
-                    _record_item(
-                        connection, run_id, file_path, file_hash, "重复",
-                        f"与已导入文档 {duplicate['filename']} 内容相同",
-                    )
-                    connection.commit()
-                    continue
-
-                metadata, pages = extract_pdf(file_path)
                 catalog_metadata = (
                     catalog.documents_by_path.get(file_path) if catalog is not None else None
                 )
+                duplicate = connection.execute(
+                    "SELECT id, filename FROM documents WHERE sha256 = ?", (file_hash,)
+                ).fetchone()
+                if duplicate:
+                    duplicates += 1
+                    with connection:
+                        if catalog_metadata is not None:
+                            _apply_authoritative_metadata(
+                                connection, int(duplicate["id"]), catalog_metadata
+                            )
+                        _record_item(
+                            connection, run_id, file_path, file_hash, "重复",
+                            f"与已导入文档 {duplicate['filename']} 内容相同",
+                        )
+                    continue
+
+                metadata, pages = extract_pdf(file_path)
                 authority_level = "reference"
                 if catalog_metadata is not None:
                     metadata = {**metadata, **catalog_metadata}
@@ -270,8 +330,9 @@ def import_directory(directory: str | Path, database_path: str | Path) -> Import
         status = "完成" if failed == 0 else "部分失败"
         connection.execute(
             """UPDATE import_runs SET finished_at = ?, status = ?, discovered_count = ?,
-               imported_count = ?, duplicate_count = ?, failed_count = ? WHERE id = ?""",
-            (utc_now(), status, len(pdf_files), imported, duplicates, failed, run_id),
+               imported_count = ?, duplicate_count = ?, failed_count = ?, duration_ms = ? WHERE id = ?""",
+            (utc_now(), status, len(pdf_files), imported, duplicates, failed,
+             (time.perf_counter() - started_clock) * 1000, run_id),
         )
         connection.commit()
 

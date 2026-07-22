@@ -38,9 +38,10 @@ from .repository import (
     get_product_aliases,
     get_product_documents,
     get_replacement_candidates,
+    get_source_fetches,
     list_documents,
     list_products,
-    search_documents,
+    search_with_context,
 )
 
 
@@ -71,7 +72,7 @@ def index():
     with connect_database(_database_path()) as connection:
         options = filter_options(connection)
         if query:
-            results = search_documents(
+            search_context = search_with_context(
                 connection,
                 query,
                 product_series,
@@ -80,6 +81,7 @@ def index():
                 association,
                 product_id,
             )
+            results = search_context["results"]
             alias_conflicts = alias_conflict_products(connection, query)
             documents = []
         else:
@@ -93,6 +95,7 @@ def index():
             )
             alias_conflicts = []
             results = []
+            search_context = None
 
     return render_template(
         "index.html",
@@ -106,6 +109,7 @@ def index():
         documents=documents,
         results=results,
         alias_conflicts=alias_conflicts,
+        search_context=search_context,
     )
 
 
@@ -185,7 +189,8 @@ def logs():
     with connect_database(_database_path()) as connection:
         runs = get_import_runs(connection)
         items = get_import_items(connection)
-    return render_template("logs.html", runs=runs, items=items)
+        source_fetches = get_source_fetches(connection)
+    return render_template("logs.html", runs=runs, items=items, source_fetches=source_fetches)
 
 
 @bp.get("/products")
