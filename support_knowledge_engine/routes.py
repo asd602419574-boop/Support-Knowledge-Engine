@@ -61,6 +61,11 @@ def _flash_validation_error(error: ValidationError) -> None:
         flash(message, "error")
 
 
+@bp.get("/favicon.ico")
+def favicon():
+    return current_app.send_static_file("favicon.svg")
+
+
 @bp.get("/")
 def index():
     query = request.args.get("q", "").strip()
