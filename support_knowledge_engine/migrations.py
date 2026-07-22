@@ -148,9 +148,61 @@ def _migration_002_governance(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_003_corpus_pilot(connection: sqlite3.Connection) -> None:
+    _add_column(connection, "import_runs", "duration_ms REAL")
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS source_fetches (
+               id INTEGER PRIMARY KEY,
+               source_id TEXT NOT NULL,
+               request_url TEXT,
+               final_url TEXT,
+               local_source_path TEXT,
+               http_status INTEGER,
+               content_type TEXT,
+               etag TEXT,
+               last_modified TEXT,
+               fetched_at TEXT NOT NULL,
+               file_size INTEGER,
+               sha256 TEXT,
+               result TEXT NOT NULL CHECK (
+                   result IN ('downloaded', 'copied', 'duplicate', 'checked', 'failed', 'disabled')
+               ),
+               error_reason TEXT,
+               saved_path TEXT,
+               dry_run INTEGER NOT NULL DEFAULT 0 CHECK (dry_run IN (0, 1))
+           )"""
+    )
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS search_logs (
+               id INTEGER PRIMARY KEY,
+               original_query TEXT NOT NULL,
+               normalized_query TEXT NOT NULL,
+               applied_rules TEXT NOT NULL,
+               recognized_products TEXT NOT NULL,
+               match_state TEXT NOT NULL CHECK (match_state IN (
+                   'high_confidence', 'possible_match', 'ambiguous_product',
+                   'version_conflict', 'outdated_only', 'insufficient_evidence'
+               )),
+               result_count INTEGER NOT NULL,
+               elapsed_ms REAL NOT NULL,
+               created_at TEXT NOT NULL
+           )"""
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_source_fetches_source ON source_fetches(source_id, fetched_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_source_fetches_hash ON source_fetches(sha256)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_search_logs_created ON search_logs(created_at DESC)"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "phase 1 baseline", _migration_001_baseline),
     (2, "knowledge governance and lifecycle", _migration_002_governance),
+    (3, "controlled corpus acquisition and search observability", _migration_003_corpus_pilot),
 )
 
 

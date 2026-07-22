@@ -19,7 +19,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
         SECRET_KEY=os.environ.get("SUPPORT_KE_SECRET", "local-development-only"),
-        DATABASE=str(Path(app.instance_path) / "knowledge.db"),
+        DATABASE=os.environ.get("SUPPORT_KE_DATABASE") or str(Path(app.instance_path) / "knowledge.db"),
         MAX_CONTENT_LENGTH=2 * 1024 * 1024,
         OPERATOR_NAME=os.environ.get("SUPPORT_KE_OPERATOR")
         or os.environ.get("USERNAME")

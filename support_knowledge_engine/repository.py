@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+import time
+from datetime import datetime, timezone
 
 from .governance import match_product_alias
+from .normalization import normalize_query
 
 
 DOCUMENT_SELECT = """
@@ -184,11 +188,110 @@ def search_documents(
         results.values(),
         key=lambda row: (
             _status_priority(str(row["status"])),
+            0 if str(row.get("document_type", "")).casefold() == "service handbook" else 1,
             float(row["rank"]),
             str(row["filename"]).casefold(),
             int(row["page_number"]),
         ),
     )
+
+
+MATCH_STATE_LABELS = {
+    "high_confidence": "高可信匹配",
+    "possible_match": "可能匹配",
+    "ambiguous_product": "产品存在歧义",
+    "version_conflict": "版本存在冲突",
+    "outdated_only": "仅命中过期文档",
+    "insufficient_evidence": "证据不足",
+}
+
+
+def search_with_context(
+    connection: sqlite3.Connection,
+    query: str,
+    product_series: str = "",
+    document_type: str = "",
+    status: str = "",
+    association: str = "",
+    product_id: str = "",
+) -> dict[str, object]:
+    started = time.perf_counter()
+    normalized = normalize_query(connection, query)
+    risks: list[str] = []
+
+    if normalized.ambiguous:
+        results: list[dict[str, object]] = []
+        state = "ambiguous_product"
+        risks.append("查询中的产品名称同时匹配多个规范产品，系统未自动选择。")
+    else:
+        inferred_product = product_id
+        if not inferred_product and len(normalized.product_ids) == 1:
+            inferred_product = str(normalized.product_ids[0])
+        results = search_documents(
+            connection,
+            normalized.retrieval_query,
+            product_series,
+            document_type,
+            status,
+            association,
+            inferred_product,
+        )
+        statuses = {str(row["status"]) for row in results}
+        if not results:
+            state = "insufficient_evidence"
+            risks.append("没有找到足够可靠的页级原文，未返回低相关内容。")
+        elif statuses <= {"superseded", "archived"}:
+            state = "outdated_only"
+            risks.append("当前只有已被替代或已归档文档命中，请勿将其视为现行依据。")
+        else:
+            active = [row for row in results if row["status"] == "effective"]
+            historical = [row for row in results if row["status"] in {"superseded", "archived"}]
+            conflicting_pairs = {
+                (row.get("canonical_product_id"), row.get("document_type")) for row in active
+            } & {
+                (row.get("canonical_product_id"), row.get("document_type")) for row in historical
+            }
+            if conflicting_pairs:
+                state = "version_conflict"
+                risks.append("同一产品和文档类型的新旧版本同时命中，请核对生效日期和替代关系。")
+            elif len(normalized.product_ids) == 1 and active:
+                state = "high_confidence"
+            else:
+                state = "possible_match"
+                risks.append("结果包含原文命中，但产品或版本证据尚不足以判定为高可信。")
+
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    created_at = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    connection.execute(
+        """INSERT INTO search_logs
+           (original_query, normalized_query, applied_rules, recognized_products,
+            match_state, result_count, elapsed_ms, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            normalized.original, normalized.normalized,
+            json.dumps(normalized.applied_rules, ensure_ascii=False),
+            json.dumps(
+                [{"id": item, "name": name} for item, name in zip(normalized.product_ids, normalized.product_names)],
+                ensure_ascii=False,
+            ),
+            state, len(results), elapsed_ms, created_at,
+        ),
+    )
+    return {
+        "original_query": normalized.original,
+        "normalized_query": normalized.normalized,
+        "retrieval_query": normalized.retrieval_query,
+        "applied_rules": list(normalized.applied_rules),
+        "recognized_products": [
+            {"id": item, "name": name}
+            for item, name in zip(normalized.product_ids, normalized.product_names)
+        ],
+        "match_state": state,
+        "match_state_label": MATCH_STATE_LABELS[state],
+        "risk_messages": risks,
+        "elapsed_ms": elapsed_ms,
+        "results": results,
+    }
 
 
 def alias_conflict_products(connection: sqlite3.Connection, query: str) -> list[sqlite3.Row]:
@@ -251,6 +354,12 @@ def get_import_items(connection: sqlite3.Connection) -> dict[int, list[sqlite3.R
     for row in rows:
         grouped.setdefault(row["run_id"], []).append(row)
     return grouped
+
+
+def get_source_fetches(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    return connection.execute(
+        "SELECT * FROM source_fetches ORDER BY id DESC LIMIT 200"
+    ).fetchall()
 
 
 def list_products(connection: sqlite3.Connection) -> list[sqlite3.Row]:

@@ -105,6 +105,20 @@
     </div>
   {% endif %}
 
+  {% if search_context %}
+    <section class="search-trace panel" aria-label="检索可信度与查询追踪">
+      <div class="trace-grid">
+        <div><span>原始查询</span><strong>{{ search_context.original_query }}</strong></div>
+        <div><span>规范化查询</span><strong>{{ search_context.normalized_query }}</strong></div>
+        <div><span>识别产品</span><strong>{% if search_context.recognized_products %}{{ search_context.recognized_products|map(attribute='name')|join('、') }}{% else %}未可靠识别{% endif %}</strong></div>
+        <div><span>匹配状态</span><strong class="confidence confidence-{{ search_context.match_state }}">{{ search_context.match_state_label }}</strong></div>
+      </div>
+      {% if search_context.applied_rules %}<p class="rule-trace">使用规则：{{ search_context.applied_rules|join('；') }}</p>{% endif %}
+      {% for warning in search_context.risk_messages %}<div class="danger-note">{{ warning }}</div>{% endfor %}
+      <small>匹配状态由可审计规则产生，不代表统计概率。检索耗时 {{ '%.1f'|format(search_context.elapsed_ms) }} ms。</small>
+    </section>
+  {% endif %}
+
   {% if query %}
     <section class="results" aria-label="搜索结果">
       {% for result in results %}
