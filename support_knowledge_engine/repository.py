@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 import time
-from datetime import datetime, timezone
 
 from .governance import match_product_alias
 from .normalization import normalize_query
+from .search_telemetry import emit_search_telemetry
 
 
 DOCUMENT_SELECT = """
@@ -206,7 +205,7 @@ MATCH_STATE_LABELS = {
 }
 
 
-def search_with_context(
+def retrieve_with_context(
     connection: sqlite3.Connection,
     query: str,
     product_series: str = "",
@@ -215,6 +214,7 @@ def search_with_context(
     association: str = "",
     product_id: str = "",
 ) -> dict[str, object]:
+    """Shared retrieval core. It does not write telemetry."""
     started = time.perf_counter()
     normalized = normalize_query(connection, query)
     risks: list[str] = []
@@ -261,22 +261,6 @@ def search_with_context(
                 risks.append("结果包含原文命中，但产品或版本证据尚不足以判定为高可信。")
 
     elapsed_ms = (time.perf_counter() - started) * 1000
-    created_at = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-    connection.execute(
-        """INSERT INTO search_logs
-           (original_query, normalized_query, applied_rules, recognized_products,
-            match_state, result_count, elapsed_ms, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            normalized.original, normalized.normalized,
-            json.dumps(normalized.applied_rules, ensure_ascii=False),
-            json.dumps(
-                [{"id": item, "name": name} for item, name in zip(normalized.product_ids, normalized.product_names)],
-                ensure_ascii=False,
-            ),
-            state, len(results), elapsed_ms, created_at,
-        ),
-    )
     return {
         "original_query": normalized.original,
         "normalized_query": normalized.normalized,
@@ -292,6 +276,28 @@ def search_with_context(
         "elapsed_ms": elapsed_ms,
         "results": results,
     }
+
+
+def search_with_context(
+    connection: sqlite3.Connection,
+    query: str,
+    product_series: str = "",
+    document_type: str = "",
+    status: str = "",
+    association: str = "",
+    product_id: str = "",
+) -> dict[str, object]:
+    result = retrieve_with_context(
+        connection,
+        query,
+        product_series,
+        document_type,
+        status,
+        association,
+        product_id,
+    )
+    emit_search_telemetry(connection, result)
+    return result
 
 
 def alias_conflict_products(connection: sqlite3.Connection, query: str) -> list[sqlite3.Row]:
