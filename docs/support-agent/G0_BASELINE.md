@@ -289,75 +289,115 @@ UI 查询走 `repository.search_with_context`：
 
 ## 7. Proposed implementation gates
 
-这些 Gate 从现有检索、语料和评测出发。不替换 FTS，不引入 LLM，不把现有函数改名为 Agent。每一项都可以单独 commit，并用 `git revert` 回滚。未获人工审核前不进入 G1。
+G0.1 修订本节。第 1–6 节的仓库事实、分类和基线结果保持不变。
 
-### G1 — Lock the retrieval baseline
+这些 Gate 从现有检索、语料和评测出发，复用 FTS、语料和评测资产。每一项只有一个目标，可以单独 commit，并用 `git revert` 回滚。未获人工审核前不进入 G1。
+
+分类规则：完成 G4 只得到 deterministic single-step runtime，系统仍然是 Retrieval System，不是 Agent。只有 G9 的 bounded iterative loop 完成，并且通过 G10 的 agent outcome evaluation 之后，系统分类才能升级为 Support Knowledge Agent。G11 加强观测和治理，不单独触发这次升级。
+
+### G1 — Retrieval baseline lock
 
 - 目标: 把本次 13/13 和 84/84 的质量指标收成测试断言。
 - 范围: 只改测试。不改 `search_documents` 或排序。
 - 交付: `tests/test_evaluation.py` 与 `tests/test_corpus_pilot.py` 断言 passed、Recall@1、Recall@3、MRR、串库率、过期误命中率、无答案误返回率。84 条集同时断言别名成功率。
 - 验收: `NO_PROXY=127.0.0.1,localhost` 时 `python -m unittest discover -s tests -v` 全部通过。
+- 回滚: 还原这两个测试文件。
 - 依赖: G0。
 
-### G2 — Read-only retrieval tool boundary
+### G2 — Read-only retrieval tool
 
 - 目标: 给 `search_with_context` 一个稳定的只读调用结果，供以后的 runtime 使用。
 - 范围: 新增适配模块和特性测试。Flask 路由继续直接调用现有函数。
 - 交付: 结果至少包含原始查询、规范化查询、`match_state`、风险句、页级命中的文档 id、文件名、页码、状态和片段。
 - 验收: 同一临时库上，适配结果与直接调用 `search_with_context` 一致；G1 指标不变。
+- 回滚: 删除适配模块及其测试。
 - 依赖: G1。
 
-### G3 — Evidence packet and decision record
+### G3 — Evidence packet / decision contract
 
 - 目标: 把一次检索收成证据包和决定，仍不生成散文回答。
 - 范围: 纯函数。`ambiguous_product` 与 `insufficient_evidence` 记为 abstain；别名冲突与 `version_conflict` 记为 conflict；`outdated_only` 记为带警告的结果；`high_confidence` 与 `possible_match` 记为带证据页的结果。
 - 交付: 证据包含 SHA-256、权威等级、版本、状态、页码。决定包含原因代码。
 - 验收: 六种状态各有测试；corpus pilot 的无答案误返回率保持 0，Recall@1 保持 1。
+- 回滚: 删除决定函数及其测试。
 - 依赖: G2。
 
-### G4 — Single-step runtime
+### G4 — Deterministic Runtime Kernel
 
-- 目标: 一个 runtime 只调用一次 G2 工具，返回 G3 的决定和证据。
-- 范围: 禁止第二次检索、计划器和模型调用。
-- 交付: runtime 函数和调用次数测试。
-- 验收: 测试证明每次运行只有一次工具调用；用 runtime 重放 84 条集时指标与 G1 相同。
+- 目标: 提供单步、无模型的 runtime，验证 tool、evidence 和 decision contract。
+- 范围: 每次运行只调用一次 G2 工具，返回 G3 的证据和决定。不接入 UI，不调用模型，不做第二次检索。
+- 交付: kernel 函数，以及工具调用次数、证据字段和决定代码的合同测试。
+- 验收: 测试证明没有模型调用且只有一次工具调用；用 kernel 重放 84 条集时 G1 指标不变。
+- 回滚: 删除 kernel 及其测试。
 - 依赖: G3。
+- 分类: 本 Gate 完成以后，系统仍是 Retrieval System。
 
-### G5 — Case store
+### G5 — Runtime Trace + Behavior Harness
 
-- 目标: 增加与文档库分离的 case 和 evidence 引用。
-- 范围: migration 4。不改 `page_fts` 的分词和列。
-- 交付: case 创建、证据引用、从 schema 3 升级的测试。
-- 验收: 升级可重复；`backup` / `restore` 保留新表；G1 检索指标不变。
-- 依赖: G3。不依赖 G4，避免数据模型和 runtime 绑死。
-
-### G6 — Support case workflow
-
-- 目标: 给 case 明确状态：opened、investigating、resolved、abstained。
-- 范围: 状态迁移。不改文档生命周期状态机。
-- 交付: 合法迁移和非法迁移测试。resolved 必须引用证据，abstained 必须引用 abstain 决定。
-- 验收: 非法迁移失败；文档 `status` 不受 case 迁移影响；G1 通过。
-- 依赖: G5。
-
-### G7 — Runtime trace
-
-- 目标: 为 G4 的一次运行写入 append-only trace。
-- 范围: 新 trace 表或同等 append-only 存储。保留现有 `search_logs` 语义。
-- 交付: trace 含工具名、输入查询、决定、证据 id 和耗时。
-- 验收: 一次 runtime 产生一条 trace；更新和删除被拒绝；G1 通过。
+- 目标: runtime 从第一次可作为执行路径出现起，就写入 append-only trace，并具备最小行为测试。
+- 范围: G4 在本 Gate 之前不提供产品入口。本 Gate 增加 trace 存储和行为测试，不改变检索排序。`search_logs` 继续只记录检索，不承担 runtime trace。
+- 交付: 每次执行至少一条 trace，字段包括 `run_id`、`step_id`、`tool`、`input`、`output/evidence`、`decision`、`latency`、`termination_reason`。更新和删除被拒绝。
+- 验收: 单步运行产生完整 trace；append-only 测试失败于更新和删除；行为测试覆盖正常结束、工具失败和 abstain；G1 通过。
+- 回滚: 删除 trace 写入、行为测试和对应 migration。
 - 依赖: G4。
 
-### G8 — Agent outcome evaluation
+### G6 — Case Store + Context
 
-- 目标: 新增一小份冻结评测，检查 abstain、conflict、过期警告和 case 迁移。
-- 范围: 新 eval 文件和命令。不替换 `evals/corpus_pilot_cases.json`。
-- 交付: 独立 pass/fail 报告。
-- 验收: 新评测全部通过，同时 84 条检索评测仍是 84/84。
-- 依赖: G3 和 G6。
+- 目标: 增加与 `documents` 和 `search_logs` 分离的 case context。
+- 范围: 新的 case 存储。不改 `page_fts` 的分词和列，不把 case 状态写入文档表或检索日志。
+- 交付: case 创建、上下文读写，以及证据引用。trace 可以记录 `case_id`，但 case 的生命周期不依赖搜索日志。
+- 验收: 删除或重建 `search_logs` 不影响 case；文档导入不创建 case；从当前 schema 升级可重复；备份恢复保留 case；G1 通过。
+- 回滚: 还原该 migration 并删除 case 模块。
+- 依赖: G5。
+
+### G7 — Support Workflow
+
+- 目标: 给 case 明确的支持流程状态：`opened`、`investigating`、`resolved`、`abstained`。
+- 范围: case 状态迁移。不改文档生命周期状态机。
+- 交付: 合法迁移和非法迁移测试。`resolved` 必须引用证据，`abstained` 必须引用 abstain 决定。
+- 验收: 非法迁移失败；文档 `status` 不受 case 迁移影响；G1 通过。
+- 回滚: 删除工作流迁移函数及其测试。
+- 依赖: G6。
+
+### G8 — Model Provider Boundary
+
+- 目标: 增加模型推理抽象，同时不把 Agent Runtime 绑定到特定厂商。
+- 范围: provider 接口和 deterministic/mock provider。本 Gate 不实现迭代循环，不把某个厂商客户端写成 runtime 的直接依赖。
+- 交付: provider 接口、mock provider，以及证明 runtime kernel 不导入厂商 SDK 的测试。
+- 验收: 测试只使用 mock provider 完成一次推理调用；仓库运行时依赖仍不包含厂商 SDK；G1 通过。
+- 回滚: 删除 provider 接口和 mock，runtime 回到无模型 kernel。
+- 依赖: G5。G7 不是本 Gate 的前置条件。
+
+### G9 — Bounded Iterative Agent Loop
+
+- 目标: 实现 Observe → Decide → Act → Observe → Stop，支持 iterative retrieval 和 query reformulation。
+- 范围: 有界循环。允许多次调用 G2 检索工具和 G8 provider。禁止没有上限的循环。
+- 交付: `max_steps`、`max_tool_calls`、timeout 或预算、`termination_reason`。每次 Observe 使用上一轮 evidence，Decide 可以改写查询，Act 调用工具，Stop 写入明确终止原因。
+- 验收: 测试覆盖查询改写后的第二次检索、达到 `max_steps`、达到 `max_tool_calls`、超时或预算耗尽。上述路径都能停止并留下 trace。不存在无限循环测试挂起。G1 的单次检索指标仍可通过原评测入口复现。
+- 回滚: 移除循环执行器，保留 G4 单步 kernel。
+- 依赖: G7 和 G8。
+
+### G10 — Agent Outcome Evaluation
+
+- 目标: 用冻结评测判断循环是否达到 Support Knowledge Agent 的结果要求。
+- 范围: 新的 agent outcome 评测。不替换 `evals/search_cases.json` 或 `evals/corpus_pilot_cases.json`。
+- 交付: 覆盖 tool selection、evidence selection、grounding、citation、abstention、conflict handling、query reformulation、termination 和 case outcome 的评测与报告。
+- 验收: 新评测全部通过，同时 84 条检索评测仍是 84/84。只有这份评测通过，G9 才能把系统分类升级为 Support Knowledge Agent。
+- 回滚: 删除新评测文件和命令，分类保持 Retrieval System。
+- 依赖: G9。
+
+### G11 — Observability / Governance Hardening
+
+- 目标: 把 trace、审计和治理边界补到可检查、可保留、可追溯。
+- 范围: 观测和治理加固。不改变 G9 的循环语义，也不单独改变系统分类。
+- 交付: trace inspection、audit/governance 检查、privacy/redaction、retention，以及 model/tool version provenance。
+- 验收: 检查接口能按 `run_id` 读出完整 trace；敏感字段按规则脱敏；超过保留期的 trace 只按规则处理；每条模型或工具调用带版本来源；更新和删除原始审计记录仍被拒绝；G1 与 G10 仍通过。
+- 回滚: 移除加固层，保留 G5 的最小 append-only trace。
+- 依赖: G10。
 
 ```text
-G0 -> G1 -> G2 -> G3 -> G4 -> G7
-                     \-> G5 -> G6 -> G8
+G0 -> G1 -> G2 -> G3 -> G4 -> G5 -> G6 -> G7 -> G9 -> G10 -> G11
+                                      \-> G8 ----/
 ```
 
-G8 同时依赖 G3 的决定记录和 G6 的流程。G5 可以在 G4 之前开始，只要 G3 已完成。
+G8 依赖 G5，不依赖 G6 或 G7。G9 同时依赖 G7 和 G8。G4 完成不改变分类。Support Knowledge Agent 这个分类只在 G9 完成且 G10 通过后成立。
