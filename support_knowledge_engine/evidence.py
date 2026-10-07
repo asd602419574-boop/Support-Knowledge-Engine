@@ -1,9 +1,11 @@
 """Immutable evidence packet and evidence decision.
 
 One capture executes the G2 retrieval tool once inside a single read
-transaction, then reads source page text in that same snapshot. The packet
-stores the tool response's provenance, that page text, and the snippet the
-tool actually returned. decide_evidence reads only the packet.
+transaction, then reads source page text in that same snapshot. The page text
+and the full-text index row must be the same content. The packet stores the
+tool response's provenance, that page text, and the snippet the tool actually
+returned. The evidence id binds both the page and that snippet. decide_evidence
+reads only the packet.
 
 An empty firmware_range is applicable. Any non-empty value is unknown: this
 corpus has no supported firmware grammar, so a dotted version is not treated
@@ -24,7 +26,7 @@ from .governance import AUTHORITY_LEVEL_LABELS, normalize_alias
 from .retrieval_tool import REQUEST_SCHEMA_VERSION, execute_retrieval_tool
 
 
-SNAPSHOT_SCHEMA_VERSION = "2"
+SNAPSHOT_SCHEMA_VERSION = "3"
 PACKET_SCHEMA_VERSION = "2"
 TRANSFORMATION_VERSION = "retrieval-excerpt-v1"
 SUPPORTING_TEXT_SOURCE = "page-content"
@@ -384,14 +386,37 @@ def _load_page_contents(
         key = (document_id, page_number)
         if key in contents:
             continue
-        found = connection.execute(
-            "SELECT content FROM pages WHERE document_id = ? AND page_number = ?",
-            (document_id, page_number),
-        ).fetchone()
-        if found is None or found["content"] is None:
-            raise EvidenceCaptureError("source_missing", "检索命中的页面在同一快照中不存在。")
-        contents[key] = str(found["content"])
+        contents[key] = _confirmed_page_content(connection, document_id, page_number)
     return contents
+
+
+def _confirmed_page_content(
+    connection: sqlite3.Connection, document_id: int, page_number: int
+) -> str:
+    """Require one pages row and one page_fts row with the same full text.
+
+    This select is not a retrieval and does not repair the index.
+    """
+
+    page_rows = connection.execute(
+        "SELECT content FROM pages WHERE document_id = ? AND page_number = ?",
+        (document_id, page_number),
+    ).fetchall()
+    index_rows = connection.execute(
+        "SELECT content FROM page_fts WHERE document_id = ? AND page_number = ?",
+        (document_id, page_number),
+    ).fetchall()
+    if len(page_rows) != 1 or len(index_rows) != 1:
+        raise EvidenceCaptureError("source_index_mismatch", "页面原文与全文索引无法唯一对应。")
+    page_text = page_rows[0]["content"]
+    index_text = index_rows[0]["content"]
+    if page_text is None or index_text is None:
+        raise EvidenceCaptureError("source_index_mismatch", "页面原文与全文索引无法唯一对应。")
+    page_value = str(page_text)
+    index_value = str(index_text)
+    if _digest(page_value) != _digest(index_value):
+        raise EvidenceCaptureError("source_index_mismatch", "页面原文与全文索引内容不一致。")
+    return page_value
 
 
 def _assemble_packet(
@@ -449,7 +474,7 @@ def _snapshot(
     try:
         supporting_text = page_contents[(document_id, page_number)]
     except KeyError as exc:
-        raise EvidenceCaptureError("source_missing", "检索命中的页面在同一快照中不存在。") from exc
+        raise EvidenceCaptureError("source_index_mismatch", "页面原文与全文索引无法唯一对应。") from exc
     visible = str(row.get("snippet") or "")
     content_digest = _digest(supporting_text)
     visible_digest = _digest(visible)
@@ -471,7 +496,16 @@ def _snapshot(
     }
     metadata_digest = _digest(_canonical(metadata))
     return EvidenceSnapshot(
-        evidence_id=_evidence_id(pdf_sha256, page_number, content_digest, metadata_digest),
+        evidence_id=_evidence_id(
+            pdf_sha256,
+            page_number,
+            content_digest,
+            metadata_digest,
+            visible_digest,
+            provenance.tool_name,
+            provenance.tool_version,
+            provenance.response_schema_version,
+        ),
         snapshot_schema_version=SNAPSHOT_SCHEMA_VERSION,
         document_id=document_id,
         document_identity=f"sha256:{pdf_sha256}",
@@ -662,15 +696,26 @@ def _digest(value: str) -> str:
 
 
 def _evidence_id(
-    pdf_sha256: str, page_number: int, content_digest: str, metadata_digest: str
+    pdf_sha256: str,
+    page_number: int,
+    content_digest: str,
+    metadata_digest: str,
+    decision_visible_digest: str,
+    tool_name: str,
+    tool_version: str,
+    response_schema_version: str,
 ) -> str:
     body = _canonical(
         {
+            "decision_visible_digest": decision_visible_digest,
             "metadata_digest": metadata_digest,
             "original_content_digest": content_digest,
             "page_number": page_number,
             "pdf_sha256": pdf_sha256,
+            "response_schema_version": response_schema_version,
             "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
+            "tool_name": tool_name,
+            "tool_version": tool_version,
             "transformation_version": TRANSFORMATION_VERSION,
         }
     )

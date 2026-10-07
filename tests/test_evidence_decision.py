@@ -129,7 +129,7 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertNotEqual(snapshot.decision_visible_representation, snapshot.supporting_original_text)
         self.assertIn(PHRASE, snapshot.decision_visible_representation)
         self.assertEqual(snapshot.transformation_version, TRANSFORMATION_VERSION)
-        self.assertEqual(snapshot.snapshot_schema_version, "2")
+        self.assertEqual(snapshot.snapshot_schema_version, "3")
         self.assertEqual(packet.packet_schema_version, "2")
         self.assertEqual(snapshot.original_content_digest, _digest(LONG_PAGE))
         self.assertEqual(
@@ -284,11 +284,11 @@ class EvidenceContractTests(unittest.TestCase):
                 packet = capture_evidence_packet(tracer, f"ACM2 {PHRASE}", captured_at=CAPTURED_AT)
             logged = tracer.statements
         self.assertEqual(calls["core"], 1)
-        self.assertTrue(any("pages" in sql.casefold() for sql in logged))
+        self.assertTrue(any("from pages" in sql.casefold() for sql in logged))
+        self.assertTrue(any("from page_fts" in sql.casefold() for sql in logged))
         self.assertTrue(any("products" in sql.casefold() for sql in logged))
         for sql in logged:
             folded = f" {sql.casefold()} "
-            self.assertNotIn("page_fts", folded)
             self.assertNotIn(" match ", folded)
             self.assertNotIn("documents", folded)
             self.assertNotIn("insert", folded)
@@ -434,22 +434,110 @@ class EvidenceContractTests(unittest.TestCase):
             )
             with self.assertRaises(EvidenceCaptureError) as caught:
                 capture_evidence_packet(connection, f"ACM2 {PHRASE}", captured_at=CAPTURED_AT)
-        self.assertEqual(caught.exception.error_type, "source_missing")
+        self.assertEqual(caught.exception.error_type, "source_index_mismatch")
 
-    def test_blank_page_source_abstains_even_when_the_snippet_matches(self) -> None:
+    def test_same_page_different_snippet_changes_evidence_id(self) -> None:
+        tail = "quantum lantern qq-42"
+        page = f"{PHRASE} service step " + ("gap token " * 40) + f"{tail} closing step"
+        self._write_case(content=page)
+        head_query = f"ACM2 {PHRASE}"
+        tail_query = f"ACM2 {tail}"
         with connect_database(self.database) as connection:
-            product_id = _product(connection, "AeroCam Mini 2", "ACM2")
-            document_id = _document(connection, product_id, "handbook.pdf", ORIGINAL_PAGE)
-            connection.execute(
-                "UPDATE pages SET content = ? WHERE document_id = ?",
-                ("   ", document_id),
+            head = capture_evidence_packet(connection, head_query, captured_at=CAPTURED_AT)
+            tail_packet = capture_evidence_packet(connection, tail_query, captured_at=CAPTURED_AT)
+            again = capture_evidence_packet(
+                connection, head_query, captured_at="2026-10-08T00:00:09+00:00"
             )
-        packet, decision = self._decide()
-        self.assertEqual(packet.retrieval_state, "high_confidence")
-        self.assertEqual(packet.evidence[0].supporting_original_text, "   ")
-        self.assertIn(PHRASE, packet.evidence[0].decision_visible_representation)
-        self.assertEqual(decision.decision_type, DECISION_ABSTAIN)
-        self.assertEqual(decision.reason_codes, (REASON_INSUFFICIENT_EVIDENCE,))
+        head_evidence = head.evidence[0]
+        tail_evidence = tail_packet.evidence[0]
+        self.assertEqual(head_evidence.supporting_original_text, page)
+        self.assertEqual(tail_evidence.supporting_original_text, page)
+        self.assertEqual(head_evidence.original_content_digest, tail_evidence.original_content_digest)
+        self.assertEqual(head_evidence.metadata_digest, tail_evidence.metadata_digest)
+        self.assertEqual(head_evidence.pdf_sha256, tail_evidence.pdf_sha256)
+        self.assertEqual(head_evidence.page_number, tail_evidence.page_number)
+        self.assertNotEqual(
+            head_evidence.decision_visible_representation,
+            tail_evidence.decision_visible_representation,
+        )
+        self.assertIn(PHRASE, head_evidence.decision_visible_representation)
+        self.assertIn(tail, tail_evidence.decision_visible_representation)
+        self.assertNotEqual(head_evidence.decision_visible_digest, tail_evidence.decision_visible_digest)
+        self.assertNotEqual(head_evidence.evidence_id, tail_evidence.evidence_id)
+        self.assertEqual(head_evidence.evidence_id, again.evidence[0].evidence_id)
+        self.assertEqual(
+            head_evidence.decision_visible_digest, again.evidence[0].decision_visible_digest
+        )
+        self.assertNotEqual(head.captured_at, again.captured_at)
+
+        def changed_tool(connection, request, **kwargs):
+            envelope = execute_retrieval_tool(connection, request, **kwargs)
+            envelope["tool_name"] = "probe-tool"
+            envelope["tool_version"] = "probe-version"
+            envelope["response_schema_version"] = "probe-response-schema"
+            return envelope
+
+        with connect_database(self.database) as connection:
+            with patch(
+                "support_knowledge_engine.evidence.execute_retrieval_tool",
+                side_effect=changed_tool,
+            ):
+                altered = capture_evidence_packet(connection, head_query, captured_at=CAPTURED_AT)
+        altered_evidence = altered.evidence[0]
+        self.assertEqual(altered_evidence.decision_visible_digest, head_evidence.decision_visible_digest)
+        self.assertEqual(altered_evidence.original_content_digest, head_evidence.original_content_digest)
+        self.assertEqual(altered_evidence.metadata_digest, head_evidence.metadata_digest)
+        self.assertEqual(altered_evidence.retrieval_tool_name, "probe-tool")
+        self.assertEqual(altered_evidence.retrieval_tool_version, "probe-version")
+        self.assertEqual(altered_evidence.retrieval_response_schema_version, "probe-response-schema")
+        self.assertNotEqual(altered_evidence.evidence_id, head_evidence.evidence_id)
+
+    def test_stale_index_does_not_become_evidence(self) -> None:
+        divergent = "完全不同但非空的页面"
+        self._write_case()
+        with connect_database(self.database) as connection:
+            connection.execute("UPDATE pages SET content = ?", (divergent,))
+        with connect_database(self.database) as connection:
+            direct = retrieve_with_context(connection, f"ACM2 {PHRASE}")
+            self.assertTrue(direct["results"])
+            self.assertIn(PHRASE, direct["results"][0]["snippet"])
+            with patch(
+                "support_knowledge_engine.repository.retrieve_with_context",
+                wraps=retrieve_with_context,
+            ) as spy:
+                with self.assertRaises(EvidenceCaptureError) as caught:
+                    capture_evidence_packet(connection, f"ACM2 {PHRASE}", captured_at=CAPTURED_AT)
+            self.assertEqual(spy.call_count, 1)
+            self.assertEqual(caught.exception.error_type, "source_index_mismatch")
+            self.assertEqual(connection.execute("SELECT content FROM pages").fetchone()[0], divergent)
+            indexed = connection.execute("SELECT content FROM page_fts").fetchone()[0]
+        self.assertIn(PHRASE, indexed)
+        self.assertNotEqual(indexed, divergent)
+
+    def test_duplicate_index_row_does_not_become_evidence(self) -> None:
+        self._write_case()
+        with connect_database(self.database) as connection:
+            row = connection.execute(
+                "SELECT document_id, page_number, content FROM page_fts"
+            ).fetchone()
+            connection.execute(
+                "INSERT INTO page_fts (content, document_id, page_number) VALUES (?, ?, ?)",
+                (row["content"], row["document_id"], row["page_number"]),
+            )
+        with connect_database(self.database) as connection:
+            direct = retrieve_with_context(connection, f"ACM2 {PHRASE}")
+            self.assertTrue(direct["results"])
+            with patch(
+                "support_knowledge_engine.repository.retrieve_with_context",
+                wraps=retrieve_with_context,
+            ) as spy:
+                with self.assertRaises(EvidenceCaptureError) as caught:
+                    capture_evidence_packet(connection, f"ACM2 {PHRASE}", captured_at=CAPTURED_AT)
+            self.assertEqual(spy.call_count, 1)
+            self.assertEqual(caught.exception.error_type, "source_index_mismatch")
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM page_fts").fetchone()[0], 2
+            )
 
     def test_snapshot_drift_decision_keeps_the_original_packet(self) -> None:
         product_id = self._write_case(content=LONG_PAGE)
@@ -975,7 +1063,7 @@ def _digest(value: str) -> str:
 
 class SnapshotFieldTests(unittest.TestCase):
     def test_snapshot_and_packet_fields_cover_the_contract(self) -> None:
-        self.assertEqual(SNAPSHOT_SCHEMA_VERSION, "2")
+        self.assertEqual(SNAPSHOT_SCHEMA_VERSION, "3")
         self.assertEqual(PACKET_SCHEMA_VERSION, "2")
         self.assertEqual(TRANSFORMATION_VERSION, "retrieval-excerpt-v1")
         self.assertEqual(SUPPORTING_TEXT_SOURCE, "page-content")
