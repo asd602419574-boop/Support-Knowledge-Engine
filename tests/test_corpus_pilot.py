@@ -24,6 +24,18 @@ class CorpusPilotTests(unittest.TestCase):
         self.assertGreaterEqual(stats["document_count"], 20)
         self.assertGreaterEqual(stats["product_count"], 4)
         self.assertGreaterEqual(stats["duplicate_file_count"], 2)
-        self.assertGreaterEqual(report["total"], 80)
-        self.assertIn("recall_at_3", report["metrics"])
-        self.assertEqual(report["metrics"]["product_leakage_rate"], 0)
+        # G1 baseline lock for evals/corpus_pilot_cases.json. These cases do
+        # carry alias, outdated-document, and no-answer samples, so the rates
+        # below are the supported retrieval baseline. Timing and database size
+        # are intentionally not locked.
+        metrics = report["metrics"]
+        self.assertEqual(report["total"], 84)
+        self.assertEqual(report["passed"], 84)
+        self.assertEqual(report["pass_rate"], 1.0)
+        self.assertEqual(metrics["recall_at_1"], 1.0)
+        self.assertEqual(metrics["recall_at_3"], 1.0)
+        self.assertEqual(metrics["mrr"], 1.0)
+        self.assertEqual(metrics["product_leakage_rate"], 0.0)
+        self.assertEqual(metrics["outdated_document_mis_hit_rate"], 0.0)
+        self.assertEqual(metrics["no_answer_false_return_rate"], 0.0)
+        self.assertEqual(metrics["alias_recognition_success_rate"], 1.0)
