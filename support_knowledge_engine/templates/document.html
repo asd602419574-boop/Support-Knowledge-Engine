@@ -73,6 +73,7 @@
     </div>
     <p class="section-help">保存时只更新当前生效值；原始提取值继续保存在数据库中。所有变化必须填写原因并写入不可修改的审计日志。</p>
     <form method="post" action="{{ url_for('main.edit_document', document_id=document.id) }}" class="governance-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <fieldset>
         <legend>基础元数据</legend>
         <div class="form-grid">

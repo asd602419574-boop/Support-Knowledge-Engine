@@ -22,6 +22,7 @@
       <a class="text-link" href="{{ url_for('main.logs') }}">查看失败清单与历史日志</a>
     </div>
     <form class="import-form" method="post" action="{{ url_for('main.start_import') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="field field-grow">
         <label for="directory">本地目录完整路径</label>
         <input id="directory" name="directory" type="text" required

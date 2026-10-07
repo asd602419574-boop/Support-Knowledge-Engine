@@ -6,6 +6,7 @@
   <section class="panel">
     <div class="panel-heading"><div><p class="eyebrow">新增产品</p><h2>创建规范产品</h2></div><span class="operator-chip">操作者：{{ operator_name }}</span></div>
     <form method="post" action="{{ url_for('main.create_product_route') }}" class="inline-governance-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="field field-grow"><label for="standard_name">标准产品名称</label><input id="standard_name" name="standard_name" required placeholder="例如：AeroCam Mini 2"></div>
       <div class="field"><label for="product_series">产品系列</label><input id="product_series" name="product_series" required placeholder="例如：AeroCam"></div>
       <div class="field"><label for="status">产品状态</label><select id="status" name="status" required>{% for value, label in product_status_labels.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div>
