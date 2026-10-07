@@ -25,6 +25,23 @@ class NormalizedQuery:
     ambiguous: bool
 
 
+_ASCII_ALNUM = "0-9A-Za-z"
+
+
+def alias_regex(alias: str) -> re.Pattern[str]:
+    """Compile a pattern that finds ``alias`` as a whole token.
+
+    A boundary is enforced only on edges that are ASCII letters or digits, so
+    ``ACM2`` does not match inside ``ACM25`` or ``xACM2y``. Edges that are CJK
+    characters or punctuation need no boundary, because Chinese text has no
+    spaces and ``航拍迷你二代故障`` must still match ``航拍迷你二代``.
+    """
+    first, last = alias[:1], alias[-1:]
+    prefix = rf"(?<![{_ASCII_ALNUM}])" if first.isascii() and first.isalnum() else ""
+    suffix = rf"(?![{_ASCII_ALNUM}])" if last.isascii() and last.isalnum() else ""
+    return re.compile(prefix + re.escape(alias) + suffix, re.IGNORECASE)
+
+
 def load_rules(path: str | Path = DEFAULT_RULES_PATH) -> dict:
     with Path(path).open("r", encoding="utf-8") as source:
         rules = json.load(source)
@@ -76,7 +93,7 @@ def normalize_query(connection, query: str, rules_path: str | Path = DEFAULT_RUL
     matches: dict[int, tuple[str, str]] = {}
     for row in alias_rows:
         alias = row["normalized_alias"]
-        if alias and alias in normalized_value:
+        if alias and alias_regex(alias).search(normalized_value):
             matches[int(row["product_id"])] = (str(row["standard_name"]), str(row["alias_text"]))
 
     product_ids = tuple(sorted(matches))
@@ -86,7 +103,7 @@ def normalize_query(connection, query: str, rules_path: str | Path = DEFAULT_RUL
     retrieval = value
     if len(product_ids) == 1:
         alias_text = matches[product_ids[0]][1]
-        retrieval = re.sub(re.escape(alias_text), " ", retrieval, flags=re.IGNORECASE)
+        retrieval = alias_regex(alias_text).sub(" ", retrieval)
         retrieval = re.sub(r"\s+", " ", retrieval).strip()
         applied.append(f"product:{alias_text}->{matches[product_ids[0]][0]}")
     fault_terms = tuple(term for term in retrieval.split() if term)
