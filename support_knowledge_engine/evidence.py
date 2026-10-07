@@ -1,37 +1,34 @@
 """Immutable evidence packet and evidence decision.
 
-Retrieval state is a signal. It is not an evidence decision. This module
-captures one retrieval inside a single read transaction, freezes the rows it
-already returned, and decides only from that packet. Decision never queries
-documents, pages, or products again.
+One capture executes the G2 retrieval tool once inside a single read
+transaction, then reads source page text in that same snapshot. The packet
+stores the tool response's provenance, that page text, and the snippet the
+tool actually returned. decide_evidence reads only the packet.
 
-The current corpus stores firmware_range as an empty string. Empty means no
-restriction was stored. The only positive grammar is exact-dotted-v1:
-``MAJOR.MINOR.PATCH`` with numeric components. Every other non-empty value,
-including the governance placeholder ``2.0.0 - 2.9.x``, is unknown.
+An empty firmware_range is applicable. Any non-empty value is unknown: this
+corpus has no supported firmware grammar, so a dotted version is not treated
+as an exact match or mismatch.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 import sqlite3
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import repository
 from .governance import AUTHORITY_LEVEL_LABELS, normalize_alias
-from .retrieval_tool import RESPONSE_SCHEMA_VERSION, TOOL_NAME, TOOL_VERSION
+from .retrieval_tool import REQUEST_SCHEMA_VERSION, execute_retrieval_tool
 
 
-SNAPSHOT_SCHEMA_VERSION = "1"
-PACKET_SCHEMA_VERSION = "1"
-TRANSFORMATION_IDENTITY = "identity-v1"
-SUPPORTING_TEXT_SOURCE = "retrieval-snippet"
-FIRMWARE_GRAMMAR = "exact-dotted-v1"
+SNAPSHOT_SCHEMA_VERSION = "2"
+PACKET_SCHEMA_VERSION = "2"
+TRANSFORMATION_VERSION = "retrieval-excerpt-v1"
+SUPPORTING_TEXT_SOURCE = "page-content"
+DECISION_VISIBLE_SOURCE = "G2 retrieval snippet"
 
 DECISION_SUPPORTED = "supported"
 DECISION_ABSTAIN = "abstain"
@@ -57,7 +54,6 @@ REASON_INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 REASON_POSSIBLE_MATCH = "possible_match"
 
 KNOWN_AUTHORITY_LEVELS = frozenset(AUTHORITY_LEVEL_LABELS)
-_EXACT_DOTTED_VERSION = re.compile(r"^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$")
 _PRODUCT_LIFECYCLE_REASONS = {
     "inactive": REASON_INACTIVE_PRODUCT,
     "archived": REASON_ARCHIVED_PRODUCT,
@@ -69,6 +65,21 @@ _DOCUMENT_LIFECYCLE_REASONS = {
     "needs_review": REASON_DOCUMENT_NEEDS_REVIEW,
     "draft": REASON_DOCUMENT_DRAFT,
 }
+_RESULT_TEXT_FIELDS = ("original_query", "normalized_query", "retrieval_query", "match_state")
+_ENVELOPE_TEXT_FIELDS = (
+    "tool_name",
+    "tool_version",
+    "request_schema_version",
+    "response_schema_version",
+)
+
+
+class EvidenceCaptureError(Exception):
+    """The G2 tool did not return a usable result. No packet is produced."""
+
+    def __init__(self, error_type: str, message: str) -> None:
+        self.error_type = error_type
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -80,8 +91,12 @@ class RecognizedProduct:
 
 @dataclass(frozen=True)
 class RequestContext:
-    """Caller context frozen with the packet. It is not read back from the database."""
+    """Request frozen from the G2 call. Queries come from that tool result."""
 
+    original_query: str
+    normalized_query: str
+    retrieval_query: str
+    request_schema_version: str
     explicit_product_id: int | None
     explicit_product_name: str | None
     explicit_product_lifecycle: str | None
@@ -120,6 +135,7 @@ class EvidenceSnapshot:
     captured_at: str
     decision_visible_representation: str
     decision_visible_digest: str
+    decision_visible_source: str
     transformation_version: str
 
 
@@ -146,24 +162,26 @@ class EvidenceDecision:
     packet_schema_version: str
 
 
-def classify_firmware(firmware_range: str, firmware_version: str | None) -> str:
-    """Return applicable, not_applicable, or unknown.
+@dataclass(frozen=True)
+class _ToolProvenance:
+    tool_name: str
+    tool_version: str
+    request_schema_version: str
+    response_schema_version: str
 
-    Empty range means the document has no stored restriction. exact-dotted-v1
-    compares the whole string. Ranges, wildcards, and other text stay unknown.
+
+def classify_firmware(firmware_range: str, firmware_version: str | None) -> str:
+    """Return applicable or unknown.
+
+    An empty stored range has no restriction. Every non-empty value stays
+    unknown. firmware_version cannot turn that value into a match or mismatch
+    until a corpus-backed grammar exists.
     """
 
-    stored = firmware_range.strip()
-    if stored == "":
+    del firmware_version
+    if firmware_range.strip() == "":
         return "applicable"
-    if _EXACT_DOTTED_VERSION.fullmatch(stored) is None:
-        return "unknown"
-    supplied = "" if firmware_version is None else firmware_version.strip()
-    if supplied == "":
-        return "unknown"
-    if supplied == stored:
-        return "applicable"
-    return "not_applicable"
+    return "unknown"
 
 
 def decide_evidence(packet: EvidencePacket) -> EvidenceDecision:
@@ -206,47 +224,57 @@ def capture_evidence_packet(
     product_id: str = "",
     firmware_version: str | None = None,
     captured_at: str | None = None,
+    retrieval_deadline_s: float | None = None,
 ) -> EvidencePacket:
-    """Retrieve once and freeze the packet before the read transaction ends.
+    """Run one G2 tool call and freeze the packet before the read transaction ends.
 
-    Page text and document metadata come from that retrieval result. Product
-    lifecycle and alias conflict are read in the same transaction, then the
-    transaction this function opened is rolled back. A caller transaction is
-    left alone. No telemetry write and no second retrieval.
+    The tool response supplies retrieval state, the snippet, and tool provenance.
+    Page text, product lifecycle, and alias conflict are read in that same
+    transaction. A transaction this function opened is rolled back. A caller
+    transaction is left alone. No search_logs write and no second retrieval.
     """
 
     timestamp = captured_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    tool_request = _tool_request(
+        query, product_series, document_type, status, association, product_id
+    )
     with _read_boundary(connection):
-        result = repository.retrieve_with_context(
-            connection,
-            query,
-            product_series,
-            document_type,
-            status,
-            association,
-            product_id,
-        )
-        explicit_product_id = int(product_id) if product_id.isdigit() else None
-        product_ids = _collect_product_ids(result, explicit_product_id)
-        products = _load_products(connection, product_ids)
-        alias_conflict = _load_alias_conflict(
-            connection,
-            str(result["normalized_query"]),
-            tuple(int(item["id"]) for item in result["recognized_products"]),
+        if retrieval_deadline_s is None:
+            envelope = execute_retrieval_tool(
+                connection, tool_request, telemetry_sink=_noop_telemetry
+            )
+        else:
+            envelope = execute_retrieval_tool(
+                connection,
+                tool_request,
+                telemetry_sink=_noop_telemetry,
+                retrieval_deadline_s=retrieval_deadline_s,
+            )
+        result = _accepted_result(envelope)
+        provenance = _provenance(envelope)
+        explicit_product_id = int(product_id) if str(product_id).isdigit() else None
+        page_contents, products, alias_conflict = _load_snapshot_facts(
+            connection, result, explicit_product_id
         )
         return _assemble_packet(
             result,
+            page_contents,
             products,
             alias_conflict,
+            provenance,
             RequestContext(
+                original_query=str(result["original_query"]),
+                normalized_query=str(result["normalized_query"]),
+                retrieval_query=str(result["retrieval_query"]),
+                request_schema_version=provenance.request_schema_version,
                 explicit_product_id=explicit_product_id,
                 explicit_product_name=_product_name(products, explicit_product_id),
                 explicit_product_lifecycle=_product_lifecycle(products, explicit_product_id),
                 firmware_version=None if firmware_version is None else firmware_version.strip(),
-                product_series=product_series,
-                document_type=document_type,
-                status=status,
-                association=association,
+                product_series=str(tool_request["product_series"]),
+                document_type=str(tool_request["document_type"]),
+                status=str(tool_request["status"]),
+                association=str(tool_request["association"]),
             ),
             timestamp,
         )
@@ -264,10 +292,114 @@ def _read_boundary(connection: sqlite3.Connection) -> Iterator[None]:
             connection.rollback()
 
 
+def _noop_telemetry(_payload: object) -> None:
+    """Class-C sink that keeps the capture transaction read-only."""
+
+
+def _tool_request(
+    query: str,
+    product_series: str,
+    document_type: str,
+    status: str,
+    association: str,
+    product_id: str,
+) -> dict[str, object]:
+    return {
+        "request_schema_version": REQUEST_SCHEMA_VERSION,
+        "query": query,
+        "product_id": product_id,
+        "product_series": product_series,
+        "document_type": document_type,
+        "status": status,
+        "association": association,
+    }
+
+
+def _accepted_result(envelope: object) -> Mapping[str, object]:
+    if not isinstance(envelope, Mapping):
+        raise EvidenceCaptureError("retrieval_failure", "检索响应无效。")
+    if not envelope.get("ok"):
+        error = envelope.get("error")
+        if isinstance(error, Mapping) and isinstance(error.get("type"), str):
+            message = error.get("message")
+            text = message if isinstance(message, str) and message else "检索失败。"
+            raise EvidenceCaptureError(str(error["type"]), text)
+        raise EvidenceCaptureError("retrieval_failure", "检索失败。")
+    result = envelope.get("result")
+    if not isinstance(result, Mapping):
+        raise EvidenceCaptureError("retrieval_failure", "检索响应缺少结果。")
+    for key in _RESULT_TEXT_FIELDS:
+        if not isinstance(result.get(key), str):
+            raise EvidenceCaptureError("retrieval_failure", "检索响应缺少请求出处。")
+    if not isinstance(result.get("recognized_products"), list):
+        raise EvidenceCaptureError("retrieval_failure", "检索响应缺少结果。")
+    if not isinstance(result.get("results"), list):
+        raise EvidenceCaptureError("retrieval_failure", "检索响应缺少结果。")
+    return result
+
+
+def _provenance(envelope: Mapping[str, object]) -> _ToolProvenance:
+    values: dict[str, str] = {}
+    for key in _ENVELOPE_TEXT_FIELDS:
+        value = envelope.get(key)
+        if not isinstance(value, str) or not value:
+            raise EvidenceCaptureError("retrieval_failure", "检索响应缺少工具出处。")
+        values[key] = value
+    return _ToolProvenance(
+        tool_name=values["tool_name"],
+        tool_version=values["tool_version"],
+        request_schema_version=values["request_schema_version"],
+        response_schema_version=values["response_schema_version"],
+    )
+
+
+def _load_snapshot_facts(
+    connection: sqlite3.Connection,
+    result: Mapping[str, object],
+    explicit_product_id: int | None,
+) -> tuple[dict[tuple[int, int], str], dict[int, tuple[str, str]], bool]:
+    """Read source text and product facts in the open capture transaction.
+
+    The tool response is already in memory. These selects are not a retrieval.
+    """
+
+    page_contents = _load_page_contents(connection, result["results"])
+    products = _load_products(connection, _collect_product_ids(result, explicit_product_id))
+    recognized = tuple(int(item["id"]) for item in result["recognized_products"])
+    alias_conflict = _load_alias_conflict(
+        connection, str(result["normalized_query"]), recognized
+    )
+    return page_contents, products, alias_conflict
+
+
+def _load_page_contents(
+    connection: sqlite3.Connection, rows: object
+) -> dict[tuple[int, int], str]:
+    if not isinstance(rows, list):
+        raise EvidenceCaptureError("retrieval_failure", "检索响应缺少结果。")
+    contents: dict[tuple[int, int], str] = {}
+    for row in rows:
+        document_id = int(row["id"])
+        page_number = int(row["page_number"])
+        key = (document_id, page_number)
+        if key in contents:
+            continue
+        found = connection.execute(
+            "SELECT content FROM pages WHERE document_id = ? AND page_number = ?",
+            (document_id, page_number),
+        ).fetchone()
+        if found is None or found["content"] is None:
+            raise EvidenceCaptureError("source_missing", "检索命中的页面在同一快照中不存在。")
+        contents[key] = str(found["content"])
+    return contents
+
+
 def _assemble_packet(
     result: Mapping[str, object],
+    page_contents: Mapping[tuple[int, int], str],
     products: Mapping[int, tuple[str, str]],
     alias_conflict: bool,
+    provenance: _ToolProvenance,
     request: RequestContext,
     captured_at: str,
 ) -> EvidencePacket:
@@ -280,7 +412,7 @@ def _assemble_packet(
         for item in result["recognized_products"]
     )
     evidence = tuple(
-        _snapshot(row, request.firmware_version, captured_at, products)
+        _snapshot(row, page_contents, request.firmware_version, captured_at, products, provenance)
         for row in result["results"]
     )
     return EvidencePacket(
@@ -291,17 +423,19 @@ def _assemble_packet(
         alias_conflict=alias_conflict,
         evidence=evidence,
         captured_at=captured_at,
-        retrieval_tool_name=TOOL_NAME,
-        retrieval_tool_version=TOOL_VERSION,
-        retrieval_response_schema_version=RESPONSE_SCHEMA_VERSION,
+        retrieval_tool_name=provenance.tool_name,
+        retrieval_tool_version=provenance.tool_version,
+        retrieval_response_schema_version=provenance.response_schema_version,
     )
 
 
 def _snapshot(
     row: Mapping[str, object],
+    page_contents: Mapping[tuple[int, int], str],
     firmware_version: str | None,
     captured_at: str,
     products: Mapping[int, tuple[str, str]],
+    provenance: _ToolProvenance,
 ) -> EvidenceSnapshot:
     product_id = _optional_int(row.get("canonical_product_id"))
     product_name = row.get("canonical_product_name")
@@ -311,16 +445,23 @@ def _snapshot(
         product_name = str(product_name)
     pdf_sha256 = str(row.get("sha256") or "")
     page_number = int(row["page_number"])
-    supporting_text = str(row.get("snippet") or "")
+    document_id = int(row["id"])
+    try:
+        supporting_text = page_contents[(document_id, page_number)]
+    except KeyError as exc:
+        raise EvidenceCaptureError("source_missing", "检索命中的页面在同一快照中不存在。") from exc
+    visible = str(row.get("snippet") or "")
     content_digest = _digest(supporting_text)
-    visible = supporting_text
+    visible_digest = _digest(visible)
     metadata = {
         "authority_level": str(row.get("authority_level") or ""),
         "canonical_product_id": product_id,
         "canonical_product_name": product_name,
         "document_lifecycle": str(row.get("status") or ""),
         "filename": str(row.get("filename") or ""),
-        "firmware_applicability": classify_firmware(str(row.get("firmware_range") or ""), firmware_version),
+        "firmware_applicability": classify_firmware(
+            str(row.get("firmware_range") or ""), firmware_version
+        ),
         "firmware_range": str(row.get("firmware_range") or ""),
         "page_number": page_number,
         "pdf_sha256": pdf_sha256,
@@ -332,7 +473,7 @@ def _snapshot(
     return EvidenceSnapshot(
         evidence_id=_evidence_id(pdf_sha256, page_number, content_digest, metadata_digest),
         snapshot_schema_version=SNAPSHOT_SCHEMA_VERSION,
-        document_id=int(row["id"]),
+        document_id=document_id,
         document_identity=f"sha256:{pdf_sha256}",
         filename=metadata["filename"],
         pdf_sha256=pdf_sha256,
@@ -350,13 +491,14 @@ def _snapshot(
         firmware_range=metadata["firmware_range"],
         firmware_applicability=metadata["firmware_applicability"],
         authority_level=metadata["authority_level"],
-        retrieval_tool_name=TOOL_NAME,
-        retrieval_tool_version=TOOL_VERSION,
-        retrieval_response_schema_version=RESPONSE_SCHEMA_VERSION,
+        retrieval_tool_name=provenance.tool_name,
+        retrieval_tool_version=provenance.tool_version,
+        retrieval_response_schema_version=provenance.response_schema_version,
         captured_at=captured_at,
         decision_visible_representation=visible,
-        decision_visible_digest=_digest(visible),
-        transformation_version=TRANSFORMATION_IDENTITY,
+        decision_visible_digest=visible_digest,
+        decision_visible_source=DECISION_VISIBLE_SOURCE,
+        transformation_version=TRANSFORMATION_VERSION,
     )
 
 
@@ -529,7 +671,7 @@ def _evidence_id(
             "page_number": page_number,
             "pdf_sha256": pdf_sha256,
             "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
-            "transformation_version": TRANSFORMATION_IDENTITY,
+            "transformation_version": TRANSFORMATION_VERSION,
         }
     )
     return "ev1-" + hashlib.sha256(body.encode("utf-8")).hexdigest()
