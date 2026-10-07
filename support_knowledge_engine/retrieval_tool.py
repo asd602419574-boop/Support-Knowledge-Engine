@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from collections.abc import Callable, Mapping
 
@@ -24,6 +25,7 @@ MAX_RESULTS = 100
 MAX_SNIPPET_CHARS = 4000
 MAX_QUERY_CHARS = 2000
 MAX_FILTER_CHARS = 200
+DEFAULT_RETRIEVAL_DEADLINE_S = 5.0
 MAX_RETRIEVAL_DEADLINE_S = 30.0
 MAX_TELEMETRY_DEADLINE_S = 5.0
 
@@ -45,50 +47,59 @@ class _InvalidRequest(ValueError):
     pass
 
 
+class _RetrievalTimeout(Exception):
+    pass
+
+
 def execute_retrieval_tool(
     connection: sqlite3.Connection,
     request: object,
     *,
     telemetry_sink: TelemetrySink | None = None,
     telemetry_deadline_s: float = DEFAULT_TELEMETRY_DEADLINE_S,
-    retrieval_deadline_s: float | None = None,
-    clock: Callable[[], float] = time.monotonic,
+    retrieval_deadline_s: float = DEFAULT_RETRIEVAL_DEADLINE_S,
 ) -> dict[str, object]:
     """Run one shared retrieval, then bounded class-C telemetry.
 
-    The presentation limit is applied to the returned copy. It does not start
-    another retrieval and does not change match_state.
+    The retrieval deadline aborts the in-flight SQLite statement. It is not an
+    elapsed check after the statement returns. The default deadline is finite.
+    The presentation limit is applied to the returned copy and does not start
+    another retrieval or change match_state.
     """
     try:
         params = _validate_request(request)
         _validate_deadline(telemetry_deadline_s, "telemetry_deadline_s", MAX_TELEMETRY_DEADLINE_S)
-        if retrieval_deadline_s is not None:
-            _validate_deadline(retrieval_deadline_s, "retrieval_deadline_s", MAX_RETRIEVAL_DEADLINE_S)
+        deadline_s = _validate_deadline(
+            retrieval_deadline_s, "retrieval_deadline_s", MAX_RETRIEVAL_DEADLINE_S
+        )
     except _InvalidRequest as exc:
         return _envelope(ok=False, error=_error(ERROR_INVALID_REQUEST, str(exc)), telemetry=None, result=None)
 
-    started = clock()
     try:
-        core_result = repository.retrieve_with_context(
+        core_result = _retrieve_within_deadline(
             connection,
-            params["query"],
-            params["product_series"],
-            params["document_type"],
-            params["status"],
-            params["association"],
-            params["product_id"],
+            lambda: repository.retrieve_with_context(
+                connection,
+                params["query"],
+                params["product_series"],
+                params["document_type"],
+                params["status"],
+                params["association"],
+                params["product_id"],
+            ),
+            deadline_s,
+        )
+    except _RetrievalTimeout:
+        return _envelope(
+            ok=False,
+            error=_error(ERROR_RETRIEVAL_TIMEOUT, "检索超过时限。"),
+            telemetry=None,
+            result=None,
         )
     except Exception:
         return _envelope(
             ok=False,
             error=_error(ERROR_RETRIEVAL_FAILURE, "检索执行失败。"),
-            telemetry=None,
-            result=None,
-        )
-    if retrieval_deadline_s is not None and clock() - started > retrieval_deadline_s:
-        return _envelope(
-            ok=False,
-            error=_error(ERROR_RETRIEVAL_TIMEOUT, "检索超过时限。"),
             telemetry=None,
             result=None,
         )
@@ -105,6 +116,82 @@ def execute_retrieval_tool(
         deadline_s=telemetry_deadline_s,
     )
     return _envelope(ok=True, error=None, telemetry=telemetry.as_dict(), result=presented)
+
+
+def _retrieve_within_deadline(
+    connection: sqlite3.Connection,
+    retrieve: Callable[[], dict[str, object]],
+    deadline_s: float,
+) -> dict[str, object]:
+    """Abort the caller's current SQLite work when the deadline is reached.
+
+    busy_timeout bounds a lock wait. sqlite3_interrupt and the progress handler
+    abort a statement that is still executing. The watchdog is joined before
+    this function returns, so it does not keep the caller connection afterward.
+    """
+    deadline_at = time.monotonic() + deadline_s
+    previous_timeout = _read_busy_timeout(connection)
+    cancel = threading.Event()
+    progress_installed = False
+
+    def _watchdog() -> None:
+        remaining = deadline_at - time.monotonic()
+        if remaining > 0 and cancel.wait(remaining):
+            return
+        try:
+            connection.interrupt()
+        except sqlite3.Error:
+            pass
+
+    def _progress() -> int:
+        return 1 if time.monotonic() >= deadline_at else 0
+
+    watchdog = threading.Thread(target=_watchdog, name="retrieval-deadline", daemon=True)
+    watchdog_started = False
+    try:
+        connection.execute(f"PRAGMA busy_timeout = {max(1, int(deadline_s * 1000))}")
+        if hasattr(connection, "set_progress_handler"):
+            connection.set_progress_handler(_progress, 10000)
+            progress_installed = True
+        watchdog.start()
+        watchdog_started = True
+        return retrieve()
+    except sqlite3.OperationalError as exc:
+        message = str(exc).lower()
+        if "interrupted" in message or "locked" in message:
+            raise _RetrievalTimeout from exc
+        raise
+    finally:
+        cancel.set()
+        if watchdog_started:
+            watchdog.join(timeout=1.0)
+        if progress_installed:
+            connection.set_progress_handler(None, 0)
+        _drain_interrupt(connection)
+        if previous_timeout is not None:
+            try:
+                connection.execute(f"PRAGMA busy_timeout = {previous_timeout}")
+            except sqlite3.Error:
+                pass
+
+
+def _read_busy_timeout(connection: sqlite3.Connection) -> int | None:
+    try:
+        row = connection.execute("PRAGMA busy_timeout").fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    return int(row[0])
+
+
+def _drain_interrupt(connection: sqlite3.Connection) -> None:
+    for _ in range(3):
+        try:
+            connection.execute("SELECT 1").fetchone()
+            return
+        except sqlite3.Error:
+            continue
 
 
 def _validate_request(request: object) -> dict[str, object]:

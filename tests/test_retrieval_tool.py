@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import inspect
 import shutil
 import sqlite3
 import tempfile
@@ -15,10 +17,12 @@ from support_knowledge_engine.demo_data import seed_demo_data
 from support_knowledge_engine import repository
 from support_knowledge_engine.repository import retrieve_with_context, search_with_context
 from support_knowledge_engine.retrieval_tool import (
+    DEFAULT_RETRIEVAL_DEADLINE_S,
     ERROR_INVALID_REQUEST,
     ERROR_RETRIEVAL_FAILURE,
     ERROR_RETRIEVAL_TIMEOUT,
     MAX_RESULTS,
+    MAX_RETRIEVAL_DEADLINE_S,
     MAX_SNIPPET_CHARS,
     TOOL_NAME,
     TOOL_VERSION,
@@ -28,6 +32,7 @@ from support_knowledge_engine.search_telemetry import (
     TELEMETRY_FAILED,
     TELEMETRY_RECORDED,
     TELEMETRY_TIMEOUT,
+    TelemetryPayload,
     emit_search_telemetry,
     insert_search_log,
 )
@@ -82,14 +87,12 @@ def _request(query: str, **extra: object) -> dict[str, object]:
     return payload
 
 
-class _ForwardClock:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        current = self.now
-        self.now += 5
-        return current
+_SLOW_RETRIEVAL_SQL = (
+    "WITH RECURSIVE c(x) AS ("
+    "SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 500000000"
+    ") SELECT max(x) FROM c"
+)
+_SENSITIVE_QUERY = "云台漂移 ada@example.com +1-415-555-0199 SN-9F3K2LQ8P1"
 
 
 class RetrievalToolTests(unittest.TestCase):
@@ -209,23 +212,43 @@ class RetrievalToolTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(logs_before, logs_after)
 
-    def test_retrieval_timeout_is_distinct_from_telemetry(self) -> None:
+    def test_retrieval_deadline_interrupts_blocking_sql(self) -> None:
+        deadline_default = inspect.signature(execute_retrieval_tool).parameters["retrieval_deadline_s"].default
+        self.assertEqual(deadline_default, DEFAULT_RETRIEVAL_DEADLINE_S)
+        self.assertGreater(DEFAULT_RETRIEVAL_DEADLINE_S, 0)
+        self.assertLessEqual(DEFAULT_RETRIEVAL_DEADLINE_S, MAX_RETRIEVAL_DEADLINE_S)
+
+        def slow_retrieval(connection: sqlite3.Connection, *args: object, **kwargs: object) -> dict[str, object]:
+            del args, kwargs
+            connection.execute(_SLOW_RETRIEVAL_SQL).fetchone()
+            raise AssertionError("blocking retrieval finished instead of being interrupted")
+
+        sink_calls: list[TelemetryPayload] = []
+
+        def sink(payload: TelemetryPayload) -> None:
+            sink_calls.append(payload)
+
         with connect_database(self.database) as connection:
             logs_before = connection.execute("SELECT COUNT(*) FROM search_logs").fetchone()[0]
             with patch(
                 "support_knowledge_engine.repository.retrieve_with_context",
-                wraps=retrieve_with_context,
+                side_effect=slow_retrieval,
             ) as spy:
+                started = time.monotonic()
                 response = execute_retrieval_tool(
                     connection,
                     _request("sensor"),
-                    retrieval_deadline_s=0.01,
-                    clock=_ForwardClock(),
+                    retrieval_deadline_s=0.25,
+                    telemetry_sink=sink,
                 )
+                elapsed = time.monotonic() - started
+            connection.execute("SELECT 1").fetchone()
             logs_after = connection.execute("SELECT COUNT(*) FROM search_logs").fetchone()[0]
         self.assertEqual(spy.call_count, 1)
+        self.assertLess(elapsed, 2.0)
         self._assert_rejected(response, ERROR_RETRIEVAL_TIMEOUT)
         self.assertIsNone(response["telemetry"])
+        self.assertEqual(sink_calls, [])
         self.assertEqual(logs_before, logs_after)
 
     def test_missing_search_logs_returns_one_retrieval(self) -> None:
@@ -255,8 +278,8 @@ class RetrievalToolTests(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_telemetry_exception_keeps_result_and_one_retrieval(self) -> None:
-        def explode(connection: sqlite3.Connection, result: dict[str, object]) -> None:
-            del connection, result
+        def explode(payload: TelemetryPayload) -> None:
+            del payload
             raise RuntimeError("telemetry exploded")
 
         with connect_database(self.database) as connection:
@@ -283,13 +306,12 @@ class RetrievalToolTests(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_locked_telemetry_returns_bounded_result(self) -> None:
-        def locked_sink(connection: sqlite3.Connection, result: dict[str, object]) -> None:
-            del connection
+        def locked_sink(payload: TelemetryPayload) -> None:
             holder = sqlite3.connect(self.database)
             writer = sqlite3.connect(self.database, timeout=0.2)
             try:
                 holder.execute("BEGIN EXCLUSIVE")
-                insert_search_log(writer, result)
+                insert_search_log(writer, payload)
                 writer.commit()
             finally:
                 writer.close()
@@ -322,9 +344,12 @@ class RetrievalToolTests(unittest.TestCase):
     def test_blocking_telemetry_returns_within_bound(self) -> None:
         release = threading.Event()
 
-        def blocking_sink(connection: sqlite3.Connection, result: dict[str, object]) -> None:
-            del connection, result
+        late = {"ran": False}
+
+        def blocking_sink(payload: TelemetryPayload) -> None:
+            del payload
             release.wait(30)
+            late["ran"] = True
 
         try:
             with connect_database(self.database) as connection:
@@ -342,7 +367,9 @@ class RetrievalToolTests(unittest.TestCase):
                         telemetry_deadline_s=0.25,
                     )
                     elapsed = time.monotonic() - started
+                connection.execute("SELECT 1").fetchone()
                 after = _knowledge_snapshot(connection)
+                frozen_response = copy.deepcopy(response)
             self.assertEqual(spy.call_count, 1)
             self.assertLess(elapsed, 2.0)
             self.assertEqual(response["ok"], True)
@@ -350,8 +377,14 @@ class RetrievalToolTests(unittest.TestCase):
             self.assertEqual(response["telemetry"]["status"], TELEMETRY_TIMEOUT)
             self._assert_same_retrieval(direct, response["result"])
             self.assertEqual(before, after)
+            self.assertFalse(late["ran"])
         finally:
             release.set()
+        deadline = time.monotonic() + 1.0
+        while not late["ran"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(late["ran"])
+        self.assertEqual(response, frozen_response)
 
     def test_default_sink_lock_is_bounded_without_another_retrieval(self) -> None:
         with connect_database(self.database) as connection:
@@ -394,10 +427,58 @@ class RetrievalToolTests(unittest.TestCase):
         self.assertEqual(columns, _LOG_COLUMNS)
         self.assertEqual(schema_version, 3)
         stored = " ".join(str(log[name]) for name in log.keys())
+        self.assertNotIn("ACM2 gimbal home sensor", stored)
+        self.assertEqual(response["result"]["original_query"], "ACM2 gimbal home sensor")
         for row in response["result"]["results"]:
             snippet = str(row["snippet"])
             if len(snippet) > 24:
                 self.assertNotIn(snippet, stored)
+
+    def test_class_c_log_omits_raw_sensitive_query(self) -> None:
+        with connect_database(self.database) as connection:
+            response = execute_retrieval_tool(connection, _request(_SENSITIVE_QUERY))
+            log = connection.execute("SELECT * FROM search_logs ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(response["ok"], True)
+        self.assertEqual(response["result"]["original_query"], _SENSITIVE_QUERY)
+        self.assertNotEqual(response["result"]["normalized_query"], "")
+        stored = " ".join(str(log[name]) for name in log.keys())
+        for secret in (
+            _SENSITIVE_QUERY,
+            str(response["result"]["normalized_query"]),
+            "ada@example.com",
+            "+1-415-555-0199",
+            "415-555-0199",
+            "1-415-555-0199",
+            "SN-9F3K2LQ8P1",
+        ):
+            self.assertNotIn(secret, stored)
+
+    def test_custom_sink_consumes_payload_without_caller_connection(self) -> None:
+        seen: list[TelemetryPayload] = []
+
+        def sink(payload: TelemetryPayload) -> None:
+            seen.append(payload)
+
+        with connect_database(self.database) as connection:
+            direct = retrieve_with_context(connection, "ACM2 gimbal home sensor")
+            with patch(
+                "support_knowledge_engine.repository.retrieve_with_context",
+                wraps=retrieve_with_context,
+            ) as spy:
+                response = execute_retrieval_tool(
+                    connection,
+                    _request("ACM2 gimbal home sensor"),
+                    telemetry_sink=sink,
+                )
+        self.assertEqual(spy.call_count, 1)
+        self.assertEqual(response["telemetry"]["status"], TELEMETRY_RECORDED)
+        self.assertEqual(len(seen), 1)
+        self.assertIsInstance(seen[0], TelemetryPayload)
+        self.assertEqual(seen[0].match_state, direct["match_state"])
+        self.assertEqual(seen[0].result_count, len(direct["results"]))
+        self.assertNotIn("ACM2 gimbal home sensor", seen[0].query_representation)
+        self.assertNotIn(str(direct["normalized_query"]), seen[0].normalized_representation)
+        self._assert_same_retrieval(direct, response["result"])
 
     def test_flask_query_uses_shared_core_once(self) -> None:
         with connect_database(self.database) as connection:
