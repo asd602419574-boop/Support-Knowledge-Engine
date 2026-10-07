@@ -239,7 +239,7 @@ UI 查询走 `repository.search_with_context`：
 
 注：旧集把 `alias_recognized` 设为 `None`，`elapsed_ms` 设为 `0.0`。别名率的分母在没有别名用例时被 `max(1, 0)` 抬成 1，所以显示 0，不能解读成别名失败。有意义的别名率是 84 条集的 1.000。
 
-84 条分类：`fault_without_product` 16，`product_abbreviation` 16，`chinese_english_mixed` 16，`outdated_only` 12，`no_answer` 12，其余 12 条覆盖错拼、全角、配件与主机、相似型号、多故障、否定、大小写、空白和标点。其中 `should_return_answer=false` 的有 12 条。这里的 `should_return_answer` 同样只表示期望是否返回检索结果页。
+84 条的 dataset category label 分布：`fault_without_product` 16，`product_abbreviation` 16，`chinese_english_mixed` 16，`outdated_only` 12，`no_answer` 12，`common_typo` 2，`fullwidth` 1，`accessory_vs_host` 2，`similar_model` 2，`multi_fault` 1，`negative_question` 1，`casefold` 1，`whitespace` 1，`punctuation` 1。这些只是评测集标签。`multi_fault` 和 `negative_question` 不表示当前查询规范化或检索已经验证了真正的多故障理解或否定语义。其中 `should_return_answer=false` 的有 12 条。这里的 `should_return_answer` 同样只表示期望是否返回检索结果页。
 
 ### Corpus and schema
 
@@ -253,7 +253,7 @@ UI 查询走 `repository.search_with_context`：
 
 - “两条入口独立”对获取器成立：`acquire_sources` 不调用导入。`import_directory` 却会在任何目录扫描时调用 `load_dji_catalog`。含 `manifest.json` 的目录通过 UI 导入时会套用权威元数据。产品行仍只由 `ensure_dji_products` 创建。
 - `reports/search-eval-baseline.md` 是旧表格。当前 `_markdown` 一律输出第三阶段指标模板。
-- `tests/test_evaluation.py` 锁定 13 条全部通过。`tests/test_corpus_pilot.py` 只要求总数不少于 80、存在 Recall@3、串库率为 0，没有锁定 84/84 或 Recall@1。本次重跑实际是 84/84。
+- `tests/test_evaluation.py` 在 baseline SHA 已锁定 13 条全部通过。当时的 `tests/test_corpus_pilot.py` 只要求总数不少于 80、存在 Recall@3、串库率为 0，没有锁定 84/84 或 Recall@1。本次重跑实际是 84/84。这是 baseline SHA `010e5cb07f541ed025f86679a9afd7d085067f68` 当时的测试状态。G1（`d2ca51b4b622fdc12393f2d8937ea027c1dc709e`）已经把 13/13 与 84/84 锁进测试；不要把本条读成当前仓库仍未锁定。
 - `reports/corpus-pilot-evaluation.md` 的通过率和质量指标与本次重跑一致。平均耗时分别是报告中的 0.370 ms 和本次的 0.321 ms。
 - README 示例使用 Python 3.11。本次运行时是 3.14.6。
 - 仓库没有 retrieval experiment 或 snapshot 实验框架。数据库快照只有 `backup.py`。
@@ -270,13 +270,13 @@ UI 查询走 `repository.search_with_context`：
 | 4. Evidence / Grounding | PARTIAL | 有页码、片段、来源路径和打开前哈希。没有 evidence packet，也没有对生成陈述的核验 |
 | 5. Support Workflow | PARTIAL | `governance.py` 提供人工文档生命周期。没有 case 的打开、排查、结案状态机 |
 | 6. Memory / Case Context | MISSING | 没有 case 表。`search_logs` 不回读 |
-| 7. Evaluation | PARTIAL | 检索指标和虚构语料评测存在。没有 agent outcome 集。84 条通过率尚未被测试锁定 |
+| 7. Evaluation | PARTIAL | 检索指标和虚构语料评测存在。没有 agent outcome 集。baseline SHA 当时 84 条通过率尚未被测试锁定；G1 已锁定该检索回归，本行的 PARTIAL 仍因为没有 agent outcome 集 |
 | 8. Observability / Governance | PARTIAL | 文档治理和审计触发器完整。搜索日志没有读模型，也没有 agent trace |
 
 ## 6. Risks
 
 - 受控 URL 获取尊重 `HTTP_PROXY`。代理接管 loopback 时，现有 source 测试会超时。检索评测不依赖这项。
-- 84 条评测的满分没有被断言锁住。后续改动可能在 unittest 仍通过时降低 Recall@1。
+- baseline SHA 当时，84 条评测的满分没有被断言锁住，后续改动可能在 unittest 仍通过时降低 Recall@1。G1 已锁定该满分。这是当时风险的记录，不是当前测试状态。两条路径被错误合并的风险仍然有效，见下一条。
 - 两条检索路径可能在后续封装时被错误合并，导致旧集和 UI 主路径行为互相污染。
 - 别名子串匹配可能在更长查询里误识别产品。当前虚构集没有暴露这个问题。
 - 评测语料是 23 份虚构文档。真实手册、扫描件和近名产品没有进入这个 baseline。
@@ -289,7 +289,7 @@ UI 查询走 `repository.search_with_context`：
 
 ## 7. Proposed implementation gates
 
-G0.2 修订 G2–G11 的 architecture contract。G1 已由双 reviewer ACCEPT，contract 保持不变。Gate 顺序不变。第 1–6 节只修正三处已确认的事实描述，基线计数和分类不变。
+G0.2 修订 G2–G11 的 architecture contract。G0.3 关闭 G0.2 reviewer 指出的 contract 缺口。G1 已由双 reviewer ACCEPT。Gate 顺序不变，G2 尚未授权实现。第 1–6 节保留 baseline SHA 的历史事实；涉及“84 条尚未锁定”的句子已标明当时状态，避免与 G1 之后的当前测试混读。
 
 这些 Gate 复用现有 FTS、语料和评测资产。每一项只有一个目标，可以单独 commit。代码回滚使用 `git revert`。改 schema 的 Gate 不能把 `git revert` 或删除 migration 文件当成数据库回滚，必须遵守下文的 schema rollback contract。
 
@@ -302,16 +302,26 @@ G0.2 修订 G2–G11 的 architecture contract。G1 已由双 reviewer ACCEPT，
 必须区分：
 
 - code rollback：用 `git revert` 撤掉代码。
-- schema compatibility rollback：旧代码仍能读取新 schema。
-- backup/restore recovery：迁移前备份可恢复到迁移前的数据库。
+- schema compatibility rollback：必须证明旧代码在新 schema 上仍能完成 startup、该版本所需的 read/write paths，以及 backup path。只证明数据库文件能被打开不够。
+- backup/restore recovery：迁移前备份可恢复到迁移前的数据库。restore pre-migration backup 会丢失 migration 之后新增的数据。选择这条回滚时，rollback decision 必须记录这个 data-loss boundary。
 
 每个 schema-changing Gate 必须定义并验证：
 
 1. migration 前创建 backup。
 2. forward migration 可重复执行并检查新结构。
-3. 回滚时要么旧代码能读取新 schema，要么明确要求 restore 迁移前的 backup。
+3. 回滚时，要么测试证明旧代码的 startup、required read/write paths 和 backup path 在新 schema 上仍可工作，要么明确要求 restore 迁移前的 backup，并记录因此丢失的 migration 后数据。
 
 不允许把删除 migration 文件、丢弃 migration 函数或只还原 Git 代码写成数据库回滚方案。
+
+### Persistent data classes
+
+持久化隐私不能只靠 G5 的 trace redaction。至少区分三类数据，G2 的 `search_logs` 与后续 telemetry、G3 snapshot、G5 trace、G6 case context 各自遵守对应策略。
+
+- A. Evidence source：为可核验性保存的原始或准原始证据。必须有明确的受保护存储、访问和保留策略。
+- B. Decision-visible evidence：实际提供给 provider 或 runtime 的裁剪、摘要或脱敏版本。必须能追溯到对应的 evidence source。
+- C. Telemetry / trace：默认不得旁路保存不必要的敏感原文。
+
+不允许出现“trace 已脱敏，但 `search_logs` 或 case context 又完整保存同一敏感文本”的旁路。若某类存储需要原文，必须明确它属于 A 或 B，并带上该类的保护策略，而不能借 telemetry 保存。
 
 ### G1 — Retrieval baseline lock
 
@@ -325,13 +335,17 @@ G0.2 修订 G2–G11 的 architecture contract。G1 已由双 reviewer ACCEPT，
 
 ### G2 — Read-only retrieval tool
 
-- 目标: 把现有检索包成稳定工具。read-only 指 Knowledge Store Read-Only，不是数据库连接严格 `query_only`。
-- 范围: 新增适配模块和特性测试。Flask 路由可以继续直接调用现有函数。本 Gate 不改变排序，不实现 Agent。
+- 目标: 把现有检索包成稳定工具，并把 retrieval 与 telemetry 真正分开。read-only 指 Knowledge Store Read-Only，不是数据库连接严格 `query_only`。本 Gate 做边界分离，不修改检索语义。
+- 允许的 production 改动: 为实现分离所必需的最小 refactor。可以修改现有 retrieval production code，但仅限提取共享 retrieval core、分离 telemetry sink / logging side effect，以及让现有 `search_with_context` 与新 tool boundary 复用同一检索核心。
+- 必须保持: query normalization、alias 行为、filters、ranking、六种 retrieval states、Flask 现有行为，以及 G1 的 13/13 与 84/84。
+- 禁止: 复制第二套 retrieval implementation；adapter 再检索第二次；拦截或伪造 SQL 来规避 telemetry；借机修复 ranking、product mismatch、archived product 等属于 G3 的问题。
 - 只读边界: 工具不得修改 `documents`、`pages`、`page_fts`、product、alias、governance data 或 document lifecycle data。
-- 副作用分离: 当前 `search_with_context` 会写 `search_logs`。retrieval result contract 与 telemetry/logging contract 必须分开。telemetry 写入失败不得改变 retrieval result。不得把“数据库严格 query_only”与“业务知识资产只读”混为一谈。
-- 交付: versioned request schema 和 versioned response schema。contract 至少包含 `tool_name`、`tool_version`、query、product/filter parameters、max results、max snippet/content size、structured errors、timeout/error behavior，以及 observability side-effect semantics。响应仍携带规范化查询、`match_state`、风险句、文档 id、文件名、页码、状态和受长度限制的片段。
-- 验收: 调用前后知识资产表的内容不变；telemetry 失败时检索结果仍一致；超限、超时和错误返回结构化错误；G1 指标不变。不得仅以“返回值与 `search_with_context` 一致”作为全部验收。
-- 回滚: 删除适配模块及其测试。本 Gate 不新增 schema。
+- 调用形状: Retrieval Core 产出 Retrieval Result。该结果返回给调用方，并 best-effort 交给 telemetry sink。telemetry 必须与已经算出的 retrieval result 解耦。
+- Telemetry: telemetry exception 不得丢失已经成功计算的 retrieval result。telemetry 表不存在、锁定或写入失败时，retrieval 仍可返回。telemetry 阻塞不能无限阻塞 tool result，必须有 deadline 或等价的 bounded best-effort sink。telemetry failure 可以形成独立 warning/status，但不能伪造成 retrieval failure。不允许为了 telemetry failure 再执行一次 retrieval。retrieval 本身失败时返回 structured retrieval error，不得写成 telemetry error。`search_logs` 属于 C 类 telemetry，不得成为敏感原文的旁路存储。
+- Timeout: 至少区分 retrieval timeout 与 telemetry timeout/failure。有效 retrieval 已经完成后，telemetry 不得无限等待。
+- 交付: versioned request schema 和 versioned response schema。contract 至少包含 `tool_name`、`tool_version`、query、product/filter parameters、max results、max snippet/content size、structured errors、上述 timeout/error behavior，以及 observability side-effect semantics。响应仍携带规范化查询、`match_state`、风险句、文档 id、文件名、页码、状态和受长度限制的片段。
+- 验收: 调用前后知识资产表的内容不变；`search_logs` 缺失时仍返回 retrieval result；telemetry 数据库锁定或 sink 抛错时仍返回相同 retrieval result；telemetry 阻塞达到限制后 result 有界返回；这些失败路径都不发生第二次 retrieval；超限和 retrieval 错误返回结构化 retrieval error，telemetry 失败不伪装成它；G1 指标不变。不得仅以“返回值与 `search_with_context` 一致”作为全部验收。
+- 回滚: `git revert` 撤掉 core 提取、sink 分离和 tool boundary。本 Gate 不新增 schema。
 - 依赖: G1。
 
 ### G3 — Evidence packet / decision contract
@@ -340,8 +354,9 @@ G0.2 修订 G2–G11 的 architecture contract。G1 已由双 reviewer ACCEPT，
 - 范围: Retrieval State 不是 Evidence Decision。现有六种 `match_state` 只作为 retrieval signal，不能直接等价为回答可信度或最终 decision。
 - 决策模型: 至少区分 retrieval state、decision type、reason codes、evidence applicability。
 - 必须覆盖的反例: recognized product 与显式 product filter 或 evidence product 不一致时，不得产生 high-confidence evidence decision。normalization 识别出 archived 或 inactive product，不表示它仍是有效支持依据，必须检查 product lifecycle applicability。`firmware_range` 当前可保存但不参与 ranking；evidence contract 必须保留并验证 firmware/version applicability，不得仅凭页命中升级为可靠依据。`authority_level` 必须进入 evidence metadata，并在本 Gate 验证 applicability。是否改变 retrieval ranking 不属于本 Gate。`ambiguous_product`、alias conflict 和 version conflict 即使共用某个 retrieval state，也不得丢失各自的 reason code。
-- Immutable evidence: case 以后长期保存的 evidence 不能只依赖 `document_id` 加 `page_number`。文档重新导入、治理修改或页面重建后，内容可能漂移。reference 必须能证明当时看到的内容。stable evidence snapshot 至少包含 document identity、PDF SHA-256、page number、source locator、supporting original text、product applicability、firmware/version applicability、decision time 的 document lifecycle state、decision time 的 authority level、retrieval/tool version 和 captured timestamp。后续文档治理变化不得静默改变这份历史依据。
-- 验收: 每个反例有测试；snapshot 字段齐全；捕获后修改当前页文本、生命周期或权威等级，不改变已捕获 snapshot；G1 指标和当前排序不变。
+- Immutable evidence: case 以后长期保存的 evidence 不能只依赖 `document_id` 加 `page_number`。文档重新导入、治理修改或页面重建后，内容可能漂移。reference 必须能证明当时看到的内容。stable evidence snapshot 至少包含 stable `evidence_id`、snapshot schema version、document identity、PDF SHA-256、page number、source locator、supporting original text、original content digest、captured metadata digest、product applicability、firmware/version applicability、decision time 的 document lifecycle state、decision time 的 authority level、retrieval/tool version、captured timestamp，以及 decision-visible representation 或其 digest。若有裁剪、摘要或脱敏，还必须记录 redaction/transformation version。后续文档治理变化不得静默改变这份历史依据。
+- Evidence capture consistency: snapshot 不只是保存后不漂移。retrieval 得到的 evidence、snapshot 捕获的 evidence，以及 decision 实际消费的 evidence 必须是同一份逻辑内容。snapshot 必须在同一一致性读取边界内构造。decision 必须直接消费该 immutable snapshot，不得拿到 id 后再查询当前 `documents` 或 `pages` 当作实际证据。若模型看到的是裁剪、摘要或脱敏后的 evidence，必须记录模型实际消费的 representation，不能只保存原始全文然后声称那就是 decision input。原始或准原文属于 A 类 evidence source；decision-visible 版本属于 B 类，并必须能追溯到 A。
+- 验收: 每个反例有测试；snapshot 字段齐全。验收顺序至少是：retrieval 之后修改当前 page 或 metadata；已构造 snapshot 不变化；decision 仍消费原 snapshot；snapshot digest 与 consumed representation 能证明二者对应。G1 指标和当前排序不变。
 - 回滚: 删除 decision、snapshot 函数及其测试。本 Gate 不新增 schema。
 - 依赖: G2。
 
@@ -359,7 +374,7 @@ G0.2 修订 G2–G11 的 architecture contract。G1 已由双 reviewer ACCEPT，
 
 - 目标: runtime 从第一次持久化 input/output 起就写入带 provenance 和 redaction boundary 的 append-only trace，并具备最小行为测试。
 - 范围: G4 在本 Gate 之前不提供产品入口。隐私和 provenance 不得推迟到 G11。本 Gate 不改变检索排序。`search_logs` 继续只记录检索，不承担 runtime trace。
-- 交付: 每次执行至少一条 trace。字段至少包括 `run_id`、`step_id`、`tool`、`input`、`output/evidence`、`decision`、`latency`、`termination_reason`、runtime version、tool version、request/response schema version 和 evidence identifiers。写入前经过 sensitive-data redaction boundary。有效保留期内拒绝普通 UPDATE 和 DELETE。
+- 交付: 每次执行至少一条 trace。字段至少包括 `run_id`、`step_id`、`tool`、`input`、`output/evidence`、`decision`、`latency`、`termination_reason`、runtime version、tool version、request/response schema version 和 evidence identifiers。trace 属于 C 类 telemetry。写入前经过 sensitive-data redaction boundary，并且不得在 `search_logs` 或 case context 中旁路保存同一敏感原文。有效保留期内拒绝普通 UPDATE 和 DELETE。
 - 验收: 单步运行产生完整 trace；敏感 fixture 不以原文落库；append-only 测试失败于普通更新和删除；行为测试覆盖正常结束、工具失败和 abstain；migration 遵守 schema rollback contract；G1 通过。
 - 回滚: code rollback 撤掉写入和行为测试。数据库回滚遵守 schema rollback contract，不靠删除 migration 文件。
 - 依赖: G4。
@@ -368,9 +383,9 @@ G0.2 修订 G2–G11 的 architecture contract。G1 已由双 reviewer ACCEPT，
 
 - 目标: 增加与 `documents` 和 `search_logs` 分离的 case context，并只引用 G3 的 immutable evidence。
 - 范围: 新的 case 存储。不改 `page_fts` 的分词和列，不把 case 状态写入文档表或检索日志。case 不得靠回读当前 `documents` 或 `pages` 重建当时的决策依据。
-- 交付: case 创建、上下文读写，以及对 immutable evidence reference 的引用。trace 可以记录 `case_id`。case 生命周期不依赖搜索日志。
+- 交付: case 创建、上下文读写，以及对 immutable evidence reference 的引用。trace 可以记录 `case_id`。case 生命周期不依赖搜索日志。case context 若保存证据文本，必须引用 A 或 B，并遵守该类策略，不能把 C 类 trace 已经去掉的敏感原文再存回来。
 - 验收: 删除或重建 `search_logs` 不影响 case；文档导入不创建 case；捕获后修改当前页文本或治理字段，case 中的 supporting text、生命周期和权威等级仍是决策当时的值；migration 前 backup、forward migration 和 schema rollback contract 均有测试；G1 通过。
-- 回滚: code rollback 撤掉 case 模块。数据库要么继续让旧代码读取新 schema，要么 restore migration 前的 backup。删除 migration 文件不是回滚方案。
+- 回滚: code rollback 撤掉 case 模块。数据库按 schema rollback contract 处理：要么证明旧代码的 startup、required read/write paths 和 backup path 在新 schema 上仍可工作，要么 restore migration 前的 backup，并记录因此丢失的 migration 后数据。删除 migration 文件不是回滚方案。
 - 依赖: G5。
 
 ### G7 — Support Workflow
@@ -396,7 +411,7 @@ PDF 和 document content 属于 untrusted data，不属于 system instruction。
 - Response: 必须是结构化结果，至少包含 action type、tool request 或 final decision、query reformulation、reason code 和 evidence references。
 - Runtime semantics: 至少定义 timeout、cancellation、provider error、malformed output、usage/token accounting，以及 model identity/version。
 - 交付: 同一 contract 下两个可互换实现：deterministic/mock provider，以及第二个 test provider 或 fixture implementation。
-- 验收: 两个实现对同一请求按 contract 互换后，runtime 观察到的动作、错误和用量字段一致；evidence 中的指令文字不能改变工具权限、运行限制或 case 规则；超时、取消、provider error 和 malformed output 都有测试；G1 通过。
+- 验收: 不要求两个 provider 对任意输入给出完全相同的 decision。必须证明 schema 一致、error semantics 一致、budget/usage semantics 一致，并且在受控 fixture 下满足预期 contract。evidence 中的指令文字不能改变工具权限、运行限制或 case 规则；超时、取消、provider error 和 malformed output 都有测试；G1 通过。
 - 回滚: 删除 provider contract 和两个测试实现，runtime 回到无模型 kernel。本 Gate 不新增 schema。
 - 依赖: G5。G7 不是本 Gate 的前置条件。
 
@@ -404,12 +419,13 @@ PDF 和 document content 属于 untrusted data，不属于 system instruction。
 
 - 目标: 实现 Observe → Decide → Act → Observe → Stop，支持 iterative retrieval 和 query reformulation。
 - 范围: 有界循环。允许多次调用 G2 检索工具和 G8 provider。`max_steps` 与 `max_tool_calls` 单独存在不足以证明有界。
-- 预算: 同时定义 per-provider-call deadline、per-tool-call deadline、total run deadline、max steps、max tool calls、retry budget 和 token/usage budget。retry 消耗预算。
+- 预算: 同时定义 per-provider-call deadline、per-tool-call deadline、total run deadline、max steps、max tool calls、retry budget 和 token/usage budget。initial attempt、retry、provider call 和 tool call 都计入相应预算。调用前必须检查或预留预算。不允许在预算已经不足时先启动昂贵调用，再在返回后才声明 `budget_exhausted`。
 - 终止原因: `completed`、`abstained`、`conflict`、`max_steps`、`max_tool_calls`、`timeout`、`budget_exhausted`、`provider_error`、`tool_error`、`invalid_action`、`no_progress`。
 - No-progress: 必须定义重复保护。至少覆盖重复相同 query、evidence 没有新增，以及 provider 连续返回等价 action。达到阈值必须停止，不得继续无限 reformulation。
-- 阻塞调用: provider 和 tool 的阻塞调用必须受 deadline 控制，不能只依赖循环计数。
-- 交付: 循环执行器、预算记账和 trace 中的 termination reason。文档内容继续只作为 untrusted knowledge。
-- 验收: 测试覆盖查询改写后的第二次检索、每一种终止原因、retry 消耗预算、阻塞调用在 deadline 到达时返回，以及 no-progress 的三类重复。文档中的“忽略规则”或“调用工具”文字不改变 policy、权限、限制或 case 规则。测试不得挂起。G1 的单次检索指标仍可通过原评测入口复现。
+- Full run lifecycle: deadline 和 cancellation 覆盖 provider call、tool call、retry、telemetry、trace/finalization、cancellation wait 和 resource cleanup。到达 run deadline 后，主 run 必须进入最终 termination state。底层迟到的 provider 或 tool result 不得再修改 case、decision、evidence 或最终状态。可取消任务必须取消。不可中断任务必须隔离在受控执行边界。遗留 background 或 orphan task 必须有明确上限。cleanup 本身也必须有界。late result rejection 要求 run 终止后的异步结果被丢弃或隔离，不得重新写回已终止 run。
+- 阻塞调用: provider、tool、telemetry 和 cleanup 的阻塞都必须受 deadline 控制，不能只依赖循环计数。
+- 交付: 循环执行器、调用前预算预留、有界收尾和 trace 中的 termination reason。文档内容继续只作为 untrusted knowledge。
+- 验收: 测试覆盖查询改写后的第二次检索、每一种终止原因、调用前预算不足时不启动调用、retry 消耗预算、阻塞调用在 deadline 到达时返回、终止后的迟到结果不写回，以及 no-progress 的三类重复。文档中的“忽略规则”或“调用工具”文字不改变 policy、权限、限制或 case 规则。测试不得挂起，也不得留下无上限的 orphan task。G1 的单次检索指标仍可通过原评测入口复现。
 - 回滚: 移除循环执行器，保留 G4 单步 kernel。本 Gate 不新增 schema。
 - 依赖: G7 和 G8。
 
@@ -417,10 +433,12 @@ PDF 和 document content 属于 untrusted data，不属于 system instruction。
 
 - 目标: 用预先写明的 acceptance criteria 判断循环是否达到 Support Knowledge Agent。
 - 范围: 新的 agent outcome 评测。不替换 `evals/search_cases.json` 或 `evals/corpus_pilot_cases.json`。不得复用 `should_return_answer` 或 `returned_answer` 表示生成式回答。
-- 三类数据: Frozen 是固定 regression set。Holdout 是开发时 Agent 和 provider 不直接针对的独立场景。Adversarial 至少覆盖 wrong product 诱导、explicit filter 与 recognized product 冲突、archived/inactive product、firmware/version 不适用、outdated/current 文档冲突、insufficient evidence、false citation、malformed provider output、provider failure、tool failure、blocked/timeout call、repeated query / no progress，以及 document prompt injection。
-- Multi-step: 至少一条行为必须同时证明第一轮 evidence 不足，Agent 根据 observation 改写 query 或 action，第二次 observation 实际不同，最终 decision 因新增 evidence 发生合理变化。如果仍不足，必须 abstain、标为 conflict，或 request clarification / safe stop，不得强行回答。
-- 其他结果: 评测仍覆盖 tool selection、evidence selection、grounding、citation、abstention、conflict handling、query reformulation、termination 和 case outcome。
-- 验收: frozen、holdout、adversarial 的 minimum acceptance criteria 全部达到。只要求脚本退出码为 0 不够。84 条检索评测仍是 84/84，但这只是检索回归，不是分类升级标准。
+- 三类数据: Frozen 是固定 regression set。Holdout 必须是 strict holdout。开发期间 Builder 能读到的案例不是 strict holdout。Adversarial 至少覆盖 wrong product 诱导、explicit filter 与 recognized product 冲突、archived/inactive product、firmware/version 不适用、outdated/current 文档冲突、insufficient evidence、false citation、malformed provider output、provider failure、tool failure、blocked/timeout call、repeated query / no progress，以及 document prompt injection。
+- Strict holdout: 必须采用其一。Option A 是 sealed evaluator-side holdout，Builder 和 runtime 开发阶段不可读取具体 holdout cases 或 expected outputs。Option B 是 post-freeze holdout，在 G9 implementation freeze 之后才首次引入 holdout。无论哪一种，都必须记录 frozen code commit、eval dataset version 和 first-run result。某个 holdout case 因失败被开发者读取并用于调试后，立即转为 regression/frozen case；后续最终独立验收必须使用新的未泄漏 holdout。
+- Acceptance criteria freeze: 运行 holdout 之前先固定 case count / coverage、scoring rules、pass thresholds 和 hard-fail conditions。hard fail 至少包括 wrong product final answer、unsupported citation、fabricated evidence、prompt injection 越权、deadline 后继续修改状态，以及 runaway 或没有终止。不允许测试后根据结果重新降低 threshold。
+- Multi-step: 成功不得只证明 query 字符串变了。必须证明 observation₁ 导致 action₂ 改变，evidence₂ 有新增或实质不同，并且 final decision 因新增 evidence 合理改变。如果仍不足，必须 abstain、标为 conflict，或 request clarification / safe stop，不得强行回答。
+- 其他结果: 评测仍覆盖 tool selection、evidence selection、grounding、citation、abstention、conflict handling、query reformulation、termination 和 case outcome。citation 必须与所引用 evidence 一致。
+- 验收: 预先冻结的 frozen、strict holdout、adversarial acceptance criteria 全部达到。只要求脚本退出码为 0 不够。84 条检索评测仍是 84/84，但这只是检索回归，不是分类升级标准。
 - 分类: G9 implementation complete，并且本 Gate 三类 acceptance criteria 全部达到，才允许称 Support Knowledge Agent。
 - 回滚: 删除新评测文件和命令，分类保持 Retrieval System。
 - 依赖: G9。
