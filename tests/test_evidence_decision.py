@@ -822,7 +822,7 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(packet.evidence, ())
 
     def test_g3_adds_no_migration(self) -> None:
-        self.assertEqual([version for version, _name, _fn in MIGRATIONS], [1, 2, 3])
+        self.assertEqual([version for version, _name, _fn in MIGRATIONS][:3], [1, 2, 3])
 
     def _assert_lifecycle_blocks(self, status: str, reason: str) -> None:
         self._write_case(product_status=status)

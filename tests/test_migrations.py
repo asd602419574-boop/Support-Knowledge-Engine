@@ -48,7 +48,7 @@ class MigrationTests(unittest.TestCase):
                 ).fetchone()[0]
                 fts_count = upgraded.execute("SELECT COUNT(*) FROM page_fts").fetchone()[0]
 
-        self.assertEqual(versions, [1, 2, 3])
+        self.assertEqual(versions, [1, 2, 3, 4])
         self.assertEqual(document["status"], "effective")
         self.assertEqual(field_count, 9)
         self.assertEqual(fts_count, 1)

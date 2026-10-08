@@ -86,8 +86,8 @@ class ReleaseMetadataTests(unittest.TestCase):
                     )
                 ]
 
-        self.assertEqual(zero_versions, [1, 2, 3])
-        self.assertEqual(two_versions, [1, 2, 3])
+        self.assertEqual(zero_versions, [1, 2, 3, 4])
+        self.assertEqual(two_versions, [1, 2, 3, 4])
 
 
 if __name__ == "__main__":

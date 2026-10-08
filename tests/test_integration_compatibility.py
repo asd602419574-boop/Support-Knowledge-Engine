@@ -137,7 +137,7 @@ class IntegrationCompatibilityTests(unittest.TestCase):
                 "SELECT * FROM search_logs ORDER BY id"
             ).fetchall()
 
-        self.assertEqual(version, 3)
+        self.assertEqual(version, 4)
         self.assertEqual(document["authority_level"], "authoritative")
         self.assertEqual(fields["title"], "Fiction Action Test User Manual v1.0")
         self.assertEqual(alias_owners, 1)
@@ -238,7 +238,7 @@ class IntegrationCompatibilityTests(unittest.TestCase):
             )
 
         backup, details = create_backup(self.database, self.root / "backups")
-        self.assertEqual(details["schema_version"], 3)
+        self.assertEqual(details["schema_version"], 4)
         with connect_database(self.database) as connection:
             connection.execute("DELETE FROM source_fetches")
             connection.execute("DELETE FROM search_logs")
@@ -322,7 +322,7 @@ class IntegrationCompatibilityTests(unittest.TestCase):
                 )
             }
 
-        self.assertEqual(versions, [1, 2, 3])
+        self.assertEqual(versions, [1, 2, 3, 4])
         self.assertEqual(new_tables, {"source_fetches", "search_logs"})
         self.assertEqual(audit_count, 1)
         self.assertEqual(len(results), 1)

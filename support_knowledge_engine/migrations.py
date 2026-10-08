@@ -199,10 +199,76 @@ def _migration_003_corpus_pilot(connection: sqlite3.Connection) -> None:
     )
 
 
+# Code revert does not roll the database back. Restoring a backup taken before
+# migration 4 discards every runtime_traces row written after that migration.
+MIGRATION_004_DATA_LOSS = (
+    "Restoring a backup taken before migration 4 discards every runtime_traces "
+    "row written after that migration."
+)
+
+
+def _migration_004_runtime_trace(connection: sqlite3.Connection) -> None:
+    # execute keeps this migration inside apply_migrations' transaction.
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS runtime_traces (
+               id INTEGER PRIMARY KEY,
+               run_id TEXT NOT NULL UNIQUE,
+               step_id TEXT NOT NULL CHECK (step_id = '1'),
+               tool_name TEXT,
+               tool_version TEXT,
+               runtime_version TEXT NOT NULL,
+               request_schema_version TEXT,
+               response_schema_version TEXT,
+               runtime_request_schema_version TEXT,
+               runtime_response_schema_version TEXT NOT NULL,
+               input_json TEXT NOT NULL,
+               output_json TEXT NOT NULL,
+               decision_json TEXT NOT NULL,
+               evidence_ids TEXT NOT NULL,
+               latency_ms REAL NOT NULL CHECK (latency_ms >= 0),
+               termination_reason TEXT NOT NULL CHECK (termination_reason IN (
+                   'supported', 'abstain', 'conflict',
+                   'invalid_request', 'retrieval_failure', 'retrieval_timeout',
+                   'source_index_mismatch'
+               )),
+               created_at TEXT NOT NULL,
+               trace_schema_version TEXT NOT NULL CHECK (trace_schema_version = '1')
+           )"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS runtime_traces_no_update
+           BEFORE UPDATE ON runtime_traces
+           BEGIN
+               SELECT RAISE(ABORT, 'runtime_traces is append-only');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS runtime_traces_no_delete
+           BEFORE DELETE ON runtime_traces
+           BEGIN
+               SELECT RAISE(ABORT, 'runtime_traces is append-only');
+           END"""
+    )
+    # REPLACE deletes the old row without firing DELETE triggers unless
+    # recursive_triggers is on. Reject that rewrite while the old row is visible.
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS runtime_traces_no_replace
+           BEFORE INSERT ON runtime_traces
+           WHEN EXISTS (
+               SELECT 1 FROM runtime_traces
+               WHERE run_id = NEW.run_id OR id = NEW.id
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'runtime_traces is append-only');
+           END"""
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "phase 1 baseline", _migration_001_baseline),
     (2, "knowledge governance and lifecycle", _migration_002_governance),
     (3, "controlled corpus acquisition and search observability", _migration_003_corpus_pilot),
+    (4, "runtime trace", _migration_004_runtime_trace),
 )
 
 
