@@ -1,0 +1,638 @@
+from __future__ import annotations
+
+import ast
+import json
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import fitz
+
+from support_knowledge_engine.backup import create_backup, restore_backup, verify_backup
+from support_knowledge_engine.cases import (
+    CASE_INVALID,
+    CASE_INVALID_MESSAGE,
+    CASE_NOT_DURABLE,
+    CASE_NOT_DURABLE_MESSAGE,
+    CLASS_A_POLICY,
+    CLASS_A_POLICY_TEXT,
+    CLASS_B_POLICY,
+    CLASS_B_POLICY_TEXT,
+    CLASS_C_CONTEXT_POLICY,
+    CaseStoreError,
+    allocate_case_id,
+    create_case,
+    read_case,
+    write_case_context,
+)
+from support_knowledge_engine.cases import _RETRIEVAL_STATES
+from support_knowledge_engine.db import connect_database, init_database
+from support_knowledge_engine.evidence import (
+    PACKET_SCHEMA_VERSION,
+    SNAPSHOT_SCHEMA_VERSION,
+    EvidenceDecision,
+    EvidencePacket,
+    EvidenceSnapshot,
+    RequestContext,
+)
+from support_knowledge_engine.importer import import_directory
+from support_knowledge_engine.migrations import (
+    MIGRATION_005_DATA_LOSS,
+    _migration_005_case_store,
+    current_schema_version,
+)
+from support_knowledge_engine.repository import MATCH_STATE_LABELS
+from support_knowledge_engine.runtime import run_runtime
+from support_knowledge_engine.trace import (
+    REDACTION_REFUSAL,
+    TracePersistenceError,
+    commit_class_c_trace,
+    execute_traced_runtime,
+    project_class_c_record,
+)
+from tests.helpers import PROJECT_ROOT
+from tests.test_runtime_trace import (
+    ORIGINAL_PAGE,
+    QUERY,
+    SECRET_EMAIL,
+    _document,
+    _migrate_through,
+    _product,
+    _request,
+    _seed_durable_document,
+)
+
+
+_RAW_QUERY = "13800138000 raw query"
+_ILLEGAL_CASE_IDS = ("13800138000", "T12345", "9F3K2LQ8")
+
+
+class CaseContractTests(unittest.TestCase):
+    def test_case_store_does_not_read_live_knowledge_or_request_text(self) -> None:
+        source = (PROJECT_ROOT / "support_knowledge_engine" / "cases.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        calls = [
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        ]
+        for name in (
+            "execute_retrieval_tool",
+            "retrieve_with_context",
+            "capture_evidence_packet",
+            "decide_evidence",
+            "run_runtime",
+            "insert_search_log",
+        ):
+            self.assertNotIn(name, calls)
+        for token in (
+            "original_query",
+            "normalized_query",
+            "retrieval_query",
+            "FROM pages",
+            "FROM documents",
+            "FROM page_fts",
+            "FROM search_logs",
+            "FROM products",
+            "page_fts",
+            "investigating",
+            "resolved",
+            "abstained",
+        ):
+            self.assertNotIn(token, source, token)
+        self.assertEqual(_RETRIEVAL_STATES, frozenset(MATCH_STATE_LABELS))
+        self.assertIn("Class A", CLASS_A_POLICY_TEXT)
+        self.assertIn("search_logs", CLASS_A_POLICY_TEXT)
+        self.assertIn("Class B", CLASS_B_POLICY_TEXT)
+        self.assertIn("class-C", CLASS_C_CONTEXT_POLICY)
+        for relative in (
+            "support_knowledge_engine/importer.py",
+            "support_knowledge_engine/routes.py",
+            "support_knowledge_engine/__init__.py",
+        ):
+            text = (PROJECT_ROOT / relative).read_text(encoding="utf-8")
+            self.assertNotIn("create_case", text)
+            self.assertNotIn("support_cases", text)
+        migration = (PROJECT_ROOT / "support_knowledge_engine" / "migrations.py").read_text(
+            encoding="utf-8"
+        )
+        body = migration.split("def _migration_005_case_store", 1)[1].split(
+            "\nMIGRATIONS", 1
+        )[0]
+        for token in ("page_fts", "search_logs", "executescript", "DROP TABLE documents"):
+            self.assertNotIn(token, body, token)
+
+
+class CaseBehaviorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.database = Path(self.temp.name) / "g6.db"
+        init_database(self.database)
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_captured_evidence_survives_live_edits_and_search_log_rebuild(self) -> None:
+        self._write_case(content=f"{ORIGINAL_PAGE} {SECRET_EMAIL}")
+        case_id = allocate_case_id()
+        with connect_database(self.database) as connection:
+            execution = execute_traced_runtime(connection, _request(), case_id=case_id)
+        self.assertTrue(execution.trace_ok, execution.error)
+        self.assertTrue(execution.runtime.ok)
+        packet = execution.runtime.packet
+        decision = execution.runtime.decision
+        assert packet is not None and decision is not None
+        frozen = packet.evidence[0]
+        self.assertIn(SECRET_EMAIL, frozen.supporting_original_text)
+        self.assertEqual(frozen.document_lifecycle, "effective")
+        self.assertEqual(frozen.authority_level, "reference")
+        self.assertEqual(frozen.product_lifecycle, "active")
+
+        with connect_database(self.database) as connection:
+            trace = connection.execute(
+                "SELECT * FROM runtime_traces WHERE run_id = ?",
+                (execution.run_id,),
+            ).fetchone()
+            self.assertEqual(trace["case_id"], case_id)
+            self.assertNotIn(SECRET_EMAIL, _joined(trace))
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0],
+                0,
+            )
+            connection.execute(
+                "UPDATE pages SET content = ? WHERE document_id = ?",
+                ("mutated page body", frozen.document_id),
+            )
+            connection.execute(
+                "UPDATE page_fts SET content = ? WHERE document_id = ?",
+                ("mutated page body", frozen.document_id),
+            )
+            connection.execute(
+                """UPDATE documents
+                   SET status = 'archived', authority_level = 'authoritative'
+                   WHERE id = ?""",
+                (frozen.document_id,),
+            )
+            connection.execute(
+                "UPDATE products SET status = 'archived' WHERE id = ?",
+                (frozen.canonical_product_id,),
+            )
+            connection.execute("DELETE FROM search_logs")
+            connection.commit()
+            self.assertFalse(connection.in_transaction)
+            before = _knowledge(connection)
+            with patch(
+                "support_knowledge_engine.repository.retrieve_with_context"
+            ) as core:
+                created = create_case(
+                    connection,
+                    packet,
+                    decision,
+                    case_id=case_id,
+                    run_id=execution.run_id,
+                    note=_RAW_QUERY,
+                )
+            self.assertEqual(core.call_count, 0)
+            self.assertEqual(_knowledge(connection), before)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM search_logs").fetchone()[0],
+                0,
+            )
+
+        self.assertEqual(created.case_id, case_id)
+        self.assertEqual(created.trace_run_ids, (execution.run_id,))
+        self.assertEqual(created.evidence[0].supporting_original_text, frozen.supporting_original_text)
+        self.assertEqual(created.evidence[0].document_lifecycle, "effective")
+        self.assertEqual(created.evidence[0].authority_level, "reference")
+        self.assertEqual(created.evidence[0].product_lifecycle, "active")
+        self.assertEqual(created.evidence[0].source_policy, CLASS_A_POLICY)
+        self.assertEqual(created.evidence[0].visible_policy, CLASS_B_POLICY)
+        self.assertEqual(
+            created.evidence[0].decision_visible_representation,
+            frozen.decision_visible_representation,
+        )
+        self.assertTrue(str(created.context.note_marker).startswith("redacted:"))
+        self.assertNotIn(_RAW_QUERY, created.context.note_marker or "")
+        self.assertNotIn(SECRET_EMAIL, json.dumps(created.context.__dict__))
+
+        reopened = _reopen_case(self.database, case_id)
+        self.assertEqual(
+            reopened.evidence[0].supporting_original_text,
+            frozen.supporting_original_text,
+        )
+        self.assertEqual(reopened.evidence[0].document_lifecycle, "effective")
+        self.assertEqual(reopened.evidence[0].authority_level, "reference")
+        self.assertNotIn(SECRET_EMAIL, reopened.context.note_marker or "")
+        self.assertNotIn(_RAW_QUERY, _case_context_blob(self.database, case_id))
+        with connect_database(self.database) as connection:
+            current = connection.execute(
+                "SELECT content FROM pages WHERE document_id = ?",
+                (frozen.document_id,),
+            ).fetchone()
+            document = connection.execute(
+                "SELECT status, authority_level FROM documents WHERE id = ?",
+                (frozen.document_id,),
+            ).fetchone()
+            self.assertEqual(current["content"], "mutated page body")
+            self.assertEqual(document["status"], "archived")
+            self.assertEqual(document["authority_level"], "authoritative")
+            log_sql = connection.execute(
+                """SELECT sql FROM sqlite_master
+                   WHERE type = 'table' AND name = 'search_logs'"""
+            ).fetchone()[0]
+            connection.execute("DROP TABLE search_logs")
+            connection.commit()
+            after_drop = read_case(connection, case_id)
+            connection.execute(log_sql)
+            connection.commit()
+        self.assertEqual(
+            after_drop.evidence[0].supporting_original_text,
+            frozen.supporting_original_text,
+        )
+        self.assertEqual(after_drop.evidence[0].document_lifecycle, "effective")
+        self.assertEqual(after_drop.evidence[0].authority_level, "reference")
+
+        with connect_database(self.database) as connection:
+            before_evidence = connection.execute(
+                "SELECT supporting_original_text, document_lifecycle, authority_level FROM case_evidence"
+            ).fetchall()
+            updated = write_case_context(connection, case_id, "")
+            after_evidence = connection.execute(
+                "SELECT supporting_original_text, document_lifecycle, authority_level FROM case_evidence"
+            ).fetchall()
+            self.assertEqual(list(before_evidence), list(after_evidence))
+        self.assertIsNone(updated.context.note_marker)
+        self.assertEqual(updated.evidence[0].supporting_original_text, frozen.supporting_original_text)
+
+    def test_request_text_is_not_copied_and_illegal_case_id_is_rejected(self) -> None:
+        packet, decision = _packet(original_query=_RAW_QUERY)
+        with connect_database(self.database) as connection:
+            created = create_case(connection, packet, decision, note="T12345")
+            self.assertNotIn(_RAW_QUERY, _case_blob(connection))
+            self.assertTrue(str(created.context.note_marker).startswith("redacted:"))
+            self.assertNotIn("T12345", created.context.note_marker or "")
+            with self.assertRaises(CaseStoreError) as caught:
+                create_case(connection, packet, decision, case_id="13800138000")
+            self.assertEqual(caught.exception.error_type, CASE_INVALID)
+            self.assertEqual(str(caught.exception), CASE_INVALID_MESSAGE)
+            self.assertNotIn("13800138000", str(caught.exception))
+        self.assertNotIn(_RAW_QUERY, Path(self.database).read_bytes().decode("utf-8", "ignore"))
+        reopened = _reopen_case(self.database, created.case_id)
+        self.assertNotIn("T12345", reopened.context.note_marker or "")
+        self.assertEqual(reopened.evidence[0].supporting_original_text, "frozen support text")
+
+        with connect_database(self.database) as connection:
+            for illegal in _ILLEGAL_CASE_IDS:
+                execution = execute_traced_runtime(connection, {"query": QUERY}, case_id=illegal)
+                self.assertFalse(execution.trace_ok)
+                self.assertIsNone(execution.run_id)
+                assert execution.error is not None
+                self.assertEqual(execution.error.type, REDACTION_REFUSAL)
+                self.assertNotIn(illegal, execution.error.message)
+                assert execution.runtime.error is not None
+                self.assertEqual(execution.runtime.error.type, "invalid_request")
+            legal = allocate_case_id()
+            execution = execute_traced_runtime(connection, {"query": QUERY}, case_id=legal)
+            self.assertTrue(execution.trace_ok, execution.error)
+            assert execution.runtime.error is not None
+            self.assertEqual(execution.runtime.error.type, "invalid_request")
+        with connect_database(self.database) as connection:
+            row = connection.execute(
+                "SELECT case_id, input_json FROM runtime_traces WHERE run_id = ?",
+                (execution.run_id,),
+            ).fetchone()
+            leaked = connection.execute(
+                """SELECT COUNT(*) FROM runtime_traces
+                   WHERE case_id IN (?, ?, ?)
+                      OR input_json LIKE ?
+                      OR input_json LIKE ?
+                      OR input_json LIKE ?""",
+                (*_ILLEGAL_CASE_IDS, "%13800138000%", "%T12345%", "%9F3K2LQ8%"),
+            ).fetchone()[0]
+        self.assertEqual(row["case_id"], legal)
+        self.assertEqual(leaked, 0)
+        with connect_database(self.database) as connection:
+            result = run_runtime(connection, _request())
+            projected = project_class_c_record(
+                result,
+                0.0,
+                run_id="ab" * 16,
+                created_at="2026-01-04T00:00:00+00:00",
+            )
+            for illegal in _ILLEGAL_CASE_IDS:
+                forged = projected.__class__(**{**projected.__dict__, "case_id": illegal})
+                with self.assertRaises(TracePersistenceError) as caught:
+                    commit_class_c_trace(connection, forged)
+                self.assertEqual(caught.exception.error_type, REDACTION_REFUSAL)
+                self.assertNotIn(illegal, str(caught.exception))
+            absent = connection.execute(
+                "SELECT COUNT(*) FROM runtime_traces WHERE run_id = ?",
+                (projected.run_id,),
+            ).fetchone()[0]
+        self.assertEqual(absent, 0)
+
+    def test_caller_transaction_is_not_committed(self) -> None:
+        packet, decision = _packet()
+        with connect_database(self.database) as connection:
+            connection.execute("BEGIN")
+            with self.assertRaises(Exception) as caught:
+                create_case(connection, packet, decision)
+            self.assertEqual(caught.exception.error_type, CASE_NOT_DURABLE)
+            self.assertEqual(str(caught.exception), CASE_NOT_DURABLE_MESSAGE)
+            self.assertTrue(connection.in_transaction)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0],
+                0,
+            )
+            connection.rollback()
+        with connect_database(self.database) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0],
+                0,
+            )
+
+    def test_evidence_rows_are_append_only_and_runtime_does_not_open_a_case(self) -> None:
+        self._write_case()
+        with connect_database(self.database) as connection:
+            run_runtime(connection, _request())
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0],
+                0,
+            )
+            execution = execute_traced_runtime(connection, _request())
+            stored_case = connection.execute(
+                "SELECT case_id FROM runtime_traces WHERE run_id = ?",
+                (execution.run_id,),
+            ).fetchone()
+            self.assertIsNone(stored_case["case_id"])
+            packet = execution.runtime.packet
+            decision = execution.runtime.decision
+            assert packet is not None and decision is not None
+            created = create_case(connection, packet, decision, run_id=execution.run_id)
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE case_evidence SET supporting_original_text = 'changed'"
+                )
+            connection.rollback()
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE support_cases SET decision_type = 'abstain' WHERE case_id = ?",
+                    (created.case_id,),
+                )
+            connection.rollback()
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute("DELETE FROM support_cases")
+            connection.rollback()
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(support_cases)")
+            }
+            fts_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'page_fts'"
+            ).fetchone()[0]
+        self.assertNotIn("status", columns)
+        self.assertIn("trigram", fts_sql)
+        reopened = _reopen_case(self.database, created.case_id)
+        self.assertEqual(reopened.decision_type, decision.decision_type)
+        self.assertEqual(
+            reopened.evidence[0].supporting_original_text,
+            packet.evidence[0].supporting_original_text,
+        )
+
+    def test_import_does_not_create_a_case(self) -> None:
+        pdf_dir = Path(self.temp.name) / "incoming"
+        pdf_dir.mkdir()
+        document = fitz.open()
+        try:
+            page = document.new_page()
+            page.insert_text((72, 72), "import does not open a support case")
+            document.save(pdf_dir / "manual.pdf")
+        finally:
+            document.close()
+        summary = import_directory(pdf_dir, self.database)
+        self.assertEqual(summary.imported, 1)
+        with connect_database(self.database) as connection:
+            documents = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            cases = connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0]
+        self.assertEqual(documents, 1)
+        self.assertEqual(cases, 0)
+
+    def _write_case(self, content: str = ORIGINAL_PAGE) -> None:
+        with connect_database(self.database) as connection:
+            product_id = _product(connection, "AeroCam Mini 2", "ACM2")
+            _document(connection, product_id, "handbook.pdf", content)
+
+
+class CaseMigrationTests(unittest.TestCase):
+    def test_pre_migration_backup_restore_drops_case_rows(self) -> None:
+        self.assertEqual(
+            MIGRATION_005_DATA_LOSS,
+            "Restoring a backup taken before migration 5 discards every support_cases, "
+            "case_evidence, and case_trace_links row written after that migration, "
+            "and discards runtime_traces.case_id values written after that migration.",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "g6.db"
+            _migrate_through(database, 4)
+            _seed_durable_document(database)
+            preserved_run = "ab" * 16
+            connection = sqlite3.connect(database)
+            try:
+                connection.execute(
+                    """INSERT INTO runtime_traces (
+                           run_id, step_id, tool_name, tool_version, runtime_version,
+                           request_schema_version, response_schema_version,
+                           runtime_request_schema_version, runtime_response_schema_version,
+                           input_json, output_json, decision_json, evidence_ids,
+                           latency_ms, termination_reason, created_at, trace_schema_version
+                       ) VALUES (?, '1', NULL, NULL, '1', NULL, NULL, NULL, '1',
+                                 '{}', '{}', '{}', '[]', 0, 'invalid_request',
+                                 '2026-01-01T00:00:00+00:00', '1')""",
+                    (preserved_run,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            pre_backup, pre_details = create_backup(database, root / "before-005", migrate=False)
+            self.assertEqual(pre_details["schema_version"], 4)
+            self.assertEqual(verify_backup(pre_backup)["schema_version"], 4)
+
+            init_database(database)
+            with connect_database(database) as connection:
+                self.assertEqual(current_schema_version(connection), 5)
+                _migration_005_case_store(connection)
+                _migration_005_case_store(connection)
+                version_rows = connection.execute(
+                    "SELECT COUNT(*) FROM schema_migrations WHERE version = 5"
+                ).fetchone()[0]
+                preserved = connection.execute(
+                    "SELECT case_id FROM runtime_traces WHERE run_id = ?",
+                    (preserved_run,),
+                ).fetchone()
+                self.assertIsNone(preserved["case_id"])
+                packet, decision = _packet()
+                case_id = allocate_case_id()
+                execution = execute_traced_runtime(
+                    connection, {"query": QUERY}, case_id=case_id
+                )
+                self.assertTrue(execution.trace_ok, execution.error)
+                create_case(
+                    connection,
+                    packet,
+                    decision,
+                    case_id=case_id,
+                    run_id=execution.run_id,
+                )
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0],
+                    1,
+                )
+            self.assertEqual(version_rows, 1)
+            migrated, migrated_details = create_backup(database, root / "migrated")
+            self.assertEqual(migrated_details["schema_version"], 5)
+
+            restored = restore_backup(pre_backup, database, confirm=True)
+            self.assertEqual(restored["schema_version"], 4)
+            with connect_database(database) as connection:
+                self.assertEqual(current_schema_version(connection), 4)
+                self.assertIsNone(
+                    connection.execute(
+                        """SELECT 1 FROM sqlite_master
+                           WHERE type = 'table' AND name = 'support_cases'"""
+                    ).fetchone()
+                )
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(runtime_traces)")
+                }
+                self.assertNotIn("case_id", columns)
+                remaining = connection.execute(
+                    "SELECT run_id FROM runtime_traces"
+                ).fetchall()
+                document = connection.execute(
+                    "SELECT filename, sha256 FROM documents"
+                ).fetchone()
+        self.assertEqual([row["run_id"] for row in remaining], [preserved_run])
+        self.assertEqual(document["filename"], "pre-g5-durable.pdf")
+        self.assertEqual(document["sha256"], "c" * 64)
+
+
+def _packet(original_query: str = _RAW_QUERY) -> tuple[EvidencePacket, EvidenceDecision]:
+    pdf_sha = "cd" * 32
+    snapshot = EvidenceSnapshot(
+        evidence_id="ev1-" + "ab" * 32,
+        snapshot_schema_version=SNAPSHOT_SCHEMA_VERSION,
+        document_id=1,
+        document_identity=f"sha256:{pdf_sha}",
+        filename="handbook.pdf",
+        pdf_sha256=pdf_sha,
+        page_number=1,
+        source_locator=f"sha256:{pdf_sha}#page=1",
+        source_url="https://example.test/handbook.pdf",
+        supporting_original_text="frozen support text",
+        supporting_text_source="page-content",
+        original_content_digest="sha256:" + "11" * 32,
+        metadata_digest="sha256:" + "22" * 32,
+        canonical_product_id=1,
+        canonical_product_name="AeroCam Mini 2",
+        product_lifecycle="active",
+        document_lifecycle="effective",
+        firmware_range="",
+        firmware_applicability="applicable",
+        authority_level="reference",
+        retrieval_tool_name="knowledge-store-retrieval",
+        retrieval_tool_version="1",
+        retrieval_response_schema_version="1",
+        captured_at="2026-01-01T00:00:00+00:00",
+        decision_visible_representation="frozen visible",
+        decision_visible_digest="sha256:" + "33" * 32,
+        decision_visible_source="G2 retrieval snippet",
+        transformation_version="retrieval-excerpt-v1",
+    )
+    packet = EvidencePacket(
+        packet_schema_version=PACKET_SCHEMA_VERSION,
+        retrieval_state="high_confidence",
+        recognized_products=(),
+        request=RequestContext(
+            original_query=original_query,
+            normalized_query=original_query,
+            retrieval_query=original_query,
+            request_schema_version="1",
+            explicit_product_id=None,
+            explicit_product_name=None,
+            explicit_product_lifecycle=None,
+            firmware_version=None,
+            product_series="",
+            document_type="",
+            status="",
+            association="",
+        ),
+        alias_conflict=False,
+        evidence=(snapshot,),
+        captured_at="2026-01-01T00:00:00+00:00",
+        retrieval_tool_name="knowledge-store-retrieval",
+        retrieval_tool_version="1",
+        retrieval_response_schema_version="1",
+    )
+    decision = EvidenceDecision(
+        decision_type="supported",
+        reason_codes=(),
+        retrieval_state="high_confidence",
+        evidence_ids=(snapshot.evidence_id,),
+        packet_schema_version=PACKET_SCHEMA_VERSION,
+    )
+    return packet, decision
+
+
+def _reopen_case(database: Path, case_id: str):
+    connection = sqlite3.connect(database)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only = ON")
+    try:
+        return read_case(connection, case_id)
+    finally:
+        connection.close()
+
+
+def _case_context_blob(database: Path, case_id: str) -> str:
+    connection = sqlite3.connect(database)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(
+            "SELECT context_json FROM support_cases WHERE case_id = ?",
+            (case_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    return str(row["context_json"])
+
+
+def _case_blob(connection: sqlite3.Connection) -> str:
+    parts: list[str] = []
+    for table in ("support_cases", "case_evidence", "case_trace_links"):
+        rows = connection.execute(f"SELECT * FROM {table}").fetchall()
+        for row in rows:
+            parts.append(_joined(row))
+    return "\n".join(parts)
+
+
+def _joined(row: sqlite3.Row) -> str:
+    return " ".join(str(row[name]) for name in row.keys())
+
+
+def _knowledge(connection: sqlite3.Connection) -> dict[str, list[tuple]]:
+    statements = {
+        "documents": "SELECT id, status, authority_level FROM documents ORDER BY id",
+        "pages": "SELECT document_id, page_number, content FROM pages ORDER BY id",
+        "products": "SELECT id, status FROM products ORDER BY id",
+        "search_logs": "SELECT id, original_query FROM search_logs ORDER BY id",
+    }
+    return {
+        name: [tuple(row) for row in connection.execute(sql)]
+        for name, sql in statements.items()
+    }
+
+
+if __name__ == "__main__":
+    unittest.main()

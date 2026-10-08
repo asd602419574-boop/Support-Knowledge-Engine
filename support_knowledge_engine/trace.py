@@ -69,6 +69,7 @@ _ENUM = re.compile(r"^[a-z0-9_]{1,64}$")
 _VERSION = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 _TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$")
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_CASE_ID = re.compile(r"^case1-[0-9a-f]{32}$")
 _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _PHONE = re.compile(r"(?<!\w)\+?\d{1,3}[-.\s](?:\d{2,4}[-.\s]){2,}\d{2,4}(?!\w)")
 _SERIAL = re.compile(r"SN-[A-Za-z0-9]{6,}", re.IGNORECASE)
@@ -77,8 +78,8 @@ _INSERT = """INSERT INTO runtime_traces (
     request_schema_version, response_schema_version,
     runtime_request_schema_version, runtime_response_schema_version,
     input_json, output_json, decision_json, evidence_ids,
-    latency_ms, termination_reason, created_at, trace_schema_version
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+    latency_ms, termination_reason, created_at, trace_schema_version, case_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
 
 class TracePersistenceError(Exception):
@@ -122,6 +123,7 @@ class TraceRecord:
     termination_reason: str
     created_at: str
     trace_schema_version: str
+    case_id: str | None = None
 
 
 def execute_traced_runtime(
@@ -129,6 +131,7 @@ def execute_traced_runtime(
     request: object,
     *,
     retrieval_deadline_s: float | None = None,
+    case_id: str | None = None,
 ) -> TraceExecution:
     """Run one runtime call, then append one redacted trace of that result."""
 
@@ -139,7 +142,7 @@ def execute_traced_runtime(
     result = run_runtime(connection, request, **arguments)
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     try:
-        record = project_class_c_record(result, elapsed_ms)
+        record = project_class_c_record(result, elapsed_ms, case_id=case_id)
         stored_run_id = commit_class_c_trace(connection, record)
     except TracePersistenceError as exc:
         return TraceExecution(
@@ -169,6 +172,7 @@ def project_class_c_record(
     *,
     run_id: str | None = None,
     created_at: str | None = None,
+    case_id: str | None = None,
 ) -> TraceRecord:
     """Project one in-memory runtime result into a class-C record.
 
@@ -266,6 +270,7 @@ def project_class_c_record(
             else created_at
         ),
         trace_schema_version=TRACE_SCHEMA_VERSION,
+        case_id=case_id,
     )
     _assert_record_shape(record)
     _assert_no_source_leak(result, record)
@@ -306,6 +311,7 @@ def commit_class_c_trace(connection: sqlite3.Connection, record: TraceRecord) ->
                 record.termination_reason,
                 record.created_at,
                 record.trace_schema_version,
+                record.case_id,
             ),
         )
         connection.commit()
@@ -477,6 +483,7 @@ def _stored_text(record: TraceRecord, columns: dict[str, str]) -> str:
         record.termination_reason,
         record.created_at,
         record.trace_schema_version,
+        record.case_id,
     )
     return "\n".join(part for part in (*scalar, *columns.values()) if isinstance(part, str))
 
@@ -519,6 +526,8 @@ def _assert_record_shape(record: TraceRecord) -> None:
         if value is not None and not _safe_token(value):
             _refuse()
     if not _accepted_runtime_request_schema_version(record.runtime_request_schema_version):
+        _refuse()
+    if not _accepted_case_id(record.case_id):
         _refuse()
     if not _safe_token(record.runtime_version) or not _safe_token(record.runtime_response_schema_version):
         _refuse()
@@ -602,6 +611,10 @@ def _allowed_string(value: str) -> bool:
 
 def _accepted_runtime_request_schema_version(value: object) -> bool:
     return value is None or value == RUNTIME_REQUEST_SCHEMA_VERSION
+
+
+def _accepted_case_id(value: object) -> bool:
+    return value is None or (isinstance(value, str) and _CASE_ID.fullmatch(value) is not None)
 
 
 def _safe_token(value: object) -> bool:

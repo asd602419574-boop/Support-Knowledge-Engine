@@ -82,6 +82,7 @@ _MIGRATION_NAMES = (
     (2, "knowledge governance and lifecycle"),
     (3, "controlled corpus acquisition and search observability"),
     (4, "runtime trace"),
+    (5, "case store"),
 )
 
 
@@ -119,7 +120,6 @@ class TraceContractTests(unittest.TestCase):
             "TOOL_NAME",
             "TOOL_VERSION",
             "search_logs",
-            "case_id",
             "openai",
             "anthropic",
             "xai",
@@ -135,6 +135,9 @@ class TraceContractTests(unittest.TestCase):
             "DELETE ",
         ):
             self.assertNotIn(token, source, token)
+        self.assertIn("case_id", source)
+        self.assertNotIn("support_cases", source)
+        self.assertNotIn("case_evidence", source)
         self.assertEqual(source.count("INSERT INTO runtime_traces"), 1)
         for relative in ("support_knowledge_engine/routes.py", "support_knowledge_engine/__init__.py"):
             text = (PROJECT_ROOT / relative).read_text(encoding="utf-8")
@@ -174,9 +177,12 @@ class TraceBehaviorTests(unittest.TestCase):
                 item[0]
                 for item in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
             }
+            case_count = connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0]
         self.assertIn("runtime_traces", names)
+        self.assertIn("support_cases", names)
         self.assertNotIn("cases", names)
-        self.assertFalse(any(name.startswith("case_") for name in names))
+        self.assertEqual(case_count, 0)
+        self.assertIsNone(row["case_id"])
 
     def test_abstain_trace_records_termination(self) -> None:
         self._write_case(firmware_range="1.2.3")
@@ -865,7 +871,7 @@ class TraceMigrationTests(unittest.TestCase):
                     row["version"]
                     for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")
                 ]
-                self.assertEqual(versions, [1, 2, 3, 4])
+                self.assertEqual(versions, [1, 2, 3, 4, 5])
                 _migration_004_runtime_trace(connection)
                 _migration_004_runtime_trace(connection)
                 triggers = [
@@ -909,8 +915,9 @@ class TraceMigrationTests(unittest.TestCase):
                 "source_index_mismatch",
             ):
                 self.assertIn(f"'{reason}'", table_sql)
-            for token in ("case_id", "max_steps", "budget_exhausted", "provider_error"):
+            for token in ("max_steps", "budget_exhausted", "provider_error"):
                 self.assertNotIn(token, table_sql)
+            self.assertIn("case_id TEXT CHECK (case_id IS NULL", table_sql)
             init_database(database)
             with connect_database(database) as connection:
                 version_rows = connection.execute(
@@ -946,7 +953,7 @@ class TraceMigrationTests(unittest.TestCase):
 
             init_database(database)
             with connect_database(database) as connection:
-                self.assertEqual(current_schema_version(connection), 4)
+                self.assertEqual(current_schema_version(connection), 5)
                 execution = execute_traced_runtime(connection, {"query": QUERY})
                 self.assertTrue(execution.trace_ok)
                 run_id = execution.run_id
@@ -955,8 +962,8 @@ class TraceMigrationTests(unittest.TestCase):
                     1,
                 )
             migrated, migrated_details = create_backup(database, root / "migrated")
-            self.assertEqual(migrated_details["schema_version"], 4)
-            self.assertEqual(verify_backup(migrated)["schema_version"], 4)
+            self.assertEqual(migrated_details["schema_version"], 5)
+            self.assertEqual(verify_backup(migrated)["schema_version"], 5)
 
             restored = restore_backup(pre_migration, database, confirm=True)
             self.assertEqual(restored["schema_version"], 3)
@@ -992,10 +999,10 @@ class TraceMigrationTests(unittest.TestCase):
             default_target = root / "default-upgrades.db"
             _sqlite_backup(database, default_target)
             upgraded, upgraded_details = create_backup(default_target, root / "default-backup")
-            self.assertEqual(upgraded_details["schema_version"], 4)
-            self.assertEqual(verify_backup(upgraded)["schema_version"], 4)
+            self.assertEqual(upgraded_details["schema_version"], 5)
+            self.assertEqual(verify_backup(upgraded)["schema_version"], 5)
             with connect_database(default_target) as connection:
-                self.assertEqual(current_schema_version(connection), 4)
+                self.assertEqual(current_schema_version(connection), 5)
 
             pre_backup, pre_details = create_backup(database, root / "before-004", migrate=False)
             self.assertEqual(pre_details["schema_version"], 3)
@@ -1014,7 +1021,7 @@ class TraceMigrationTests(unittest.TestCase):
 
             init_database(database)
             with connect_database(database) as connection:
-                self.assertEqual(current_schema_version(connection), 4)
+                self.assertEqual(current_schema_version(connection), 5)
                 execution = execute_traced_runtime(connection, {"query": QUERY})
                 self.assertTrue(execution.trace_ok)
                 self.assertIsNotNone(execution.run_id)

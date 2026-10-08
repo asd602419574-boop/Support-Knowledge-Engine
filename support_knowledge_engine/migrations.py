@@ -264,11 +264,156 @@ def _migration_004_runtime_trace(connection: sqlite3.Connection) -> None:
     )
 
 
+# Code revert does not roll the database back. Restoring a backup taken before
+# migration 5 discards case rows and case-linked trace ids written after it.
+MIGRATION_005_DATA_LOSS = (
+    "Restoring a backup taken before migration 5 discards every support_cases, "
+    "case_evidence, and case_trace_links row written after that migration, "
+    "and discards runtime_traces.case_id values written after that migration."
+)
+
+
+def _migration_005_case_store(connection: sqlite3.Connection) -> None:
+    # execute keeps this migration inside apply_migrations' transaction.
+    hex32 = "[0-9a-f]" * 32
+    case_id_check = f"length(case_id) = 38 AND case_id GLOB 'case1-{hex32}'"
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS support_cases (
+               id INTEGER PRIMARY KEY,
+               case_id TEXT NOT NULL UNIQUE CHECK ({case_id_check}),
+               created_at TEXT NOT NULL,
+               context_json TEXT NOT NULL,
+               context_schema_version TEXT NOT NULL CHECK (context_schema_version = '1'),
+               context_updated_at TEXT NOT NULL,
+               decision_type TEXT NOT NULL CHECK (
+                   decision_type IN ('supported', 'abstain', 'conflict')
+               ),
+               reason_codes_json TEXT NOT NULL,
+               retrieval_state TEXT NOT NULL CHECK (
+                   retrieval_state IN (
+                       'ambiguous_product', 'high_confidence', 'insufficient_evidence',
+                       'outdated_only', 'possible_match', 'version_conflict'
+                   )
+               ),
+               packet_schema_version TEXT NOT NULL
+           )"""
+    )
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS case_evidence (
+               id INTEGER PRIMARY KEY,
+               case_id TEXT NOT NULL REFERENCES support_cases(case_id) ON DELETE RESTRICT,
+               evidence_id TEXT NOT NULL,
+               snapshot_schema_version TEXT NOT NULL,
+               supporting_original_text TEXT NOT NULL,
+               document_lifecycle TEXT NOT NULL,
+               product_lifecycle TEXT,
+               authority_level TEXT NOT NULL,
+               original_content_digest TEXT NOT NULL,
+               decision_visible_representation TEXT NOT NULL,
+               decision_visible_digest TEXT NOT NULL,
+               pdf_sha256 TEXT NOT NULL,
+               page_number INTEGER NOT NULL CHECK (page_number > 0),
+               document_identity TEXT NOT NULL,
+               captured_at TEXT NOT NULL,
+               source_policy TEXT NOT NULL,
+               visible_policy TEXT NOT NULL,
+               UNIQUE(case_id, evidence_id)
+           )"""
+    )
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS case_trace_links (
+               id INTEGER PRIMARY KEY,
+               case_id TEXT NOT NULL REFERENCES support_cases(case_id) ON DELETE RESTRICT,
+               run_id TEXT NOT NULL CHECK (length(run_id) = 32 AND run_id GLOB '{hex32}'),
+               recorded_at TEXT NOT NULL,
+               UNIQUE(case_id, run_id)
+           )"""
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_case_evidence_case ON case_evidence(case_id)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_case_trace_links_case ON case_trace_links(case_id)"
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS support_cases_no_delete
+           BEFORE DELETE ON support_cases
+           BEGIN
+               SELECT RAISE(ABORT, 'support_cases identity is immutable');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS support_cases_no_replace
+           BEFORE INSERT ON support_cases
+           WHEN EXISTS (
+               SELECT 1 FROM support_cases
+               WHERE id = NEW.id OR case_id = NEW.case_id
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'support_cases identity is immutable');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS support_cases_identity_no_update
+           BEFORE UPDATE OF id, case_id, created_at, context_schema_version,
+                             decision_type, reason_codes_json, retrieval_state,
+                             packet_schema_version
+           ON support_cases
+           BEGIN
+               SELECT RAISE(ABORT, 'support_cases identity is immutable');
+           END"""
+    )
+    for table in ("case_evidence", "case_trace_links"):
+        connection.execute(
+            f"""CREATE TRIGGER IF NOT EXISTS {table}_no_update
+                BEFORE UPDATE ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{table} is append-only');
+                END"""
+        )
+        connection.execute(
+            f"""CREATE TRIGGER IF NOT EXISTS {table}_no_delete
+                BEFORE DELETE ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{table} is append-only');
+                END"""
+        )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS case_evidence_no_replace
+           BEFORE INSERT ON case_evidence
+           WHEN EXISTS (
+               SELECT 1 FROM case_evidence
+               WHERE id = NEW.id OR (case_id = NEW.case_id AND evidence_id = NEW.evidence_id)
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'case_evidence is append-only');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS case_trace_links_no_replace
+           BEFORE INSERT ON case_trace_links
+           WHEN EXISTS (
+               SELECT 1 FROM case_trace_links
+               WHERE id = NEW.id OR (case_id = NEW.case_id AND run_id = NEW.run_id)
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'case_trace_links is append-only');
+           END"""
+    )
+    _add_column(
+        connection,
+        "runtime_traces",
+        "case_id TEXT CHECK (case_id IS NULL OR ("
+        f"{case_id_check}))",
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "phase 1 baseline", _migration_001_baseline),
     (2, "knowledge governance and lifecycle", _migration_002_governance),
     (3, "controlled corpus acquisition and search observability", _migration_003_corpus_pilot),
     (4, "runtime trace", _migration_004_runtime_trace),
+    (5, "case store", _migration_005_case_store),
 )
 
 
