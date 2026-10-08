@@ -20,10 +20,10 @@ from .evidence import (
     DECISION_CONFLICT,
     DECISION_SUPPORTED,
     PACKET_SCHEMA_VERSION,
-    SNAPSHOT_SCHEMA_VERSION,
     EvidenceDecision,
     EvidencePacket,
     EvidenceSnapshot,
+    snapshot_integrity_ok,
 )
 from .search_telemetry import class_c_query_text
 
@@ -32,15 +32,17 @@ CASE_CONTEXT_SCHEMA_VERSION = "1"
 CLASS_A_POLICY = "class-a-evidence-source-v1"
 CLASS_B_POLICY = "class-b-decision-visible-v1"
 CLASS_A_POLICY_TEXT = (
-    "Class A supporting original text is stored only on case_evidence for "
-    "verification. Readers load it from the case store. It is not copied into "
-    "search_logs, runtime trace payloads, or mutable case context. Retention "
-    "follows the case until a governed retention action exists."
+    "Class A supporting original text, filename, source URL, source locator, "
+    "firmware range, and product name are stored only on case_evidence for "
+    "verification. Readers load them from the case store. They are not copied "
+    "into search_logs, runtime trace payloads, or mutable case context. "
+    "Retention follows the case until a governed retention action exists."
 )
 CLASS_B_POLICY_TEXT = (
     "Class B decision-visible text is stored on case_evidence and binds to "
-    "the class A source through evidence_id, original_content_digest, and "
-    "decision_visible_digest."
+    "the class A source through evidence_id, original_content_digest, "
+    "metadata_digest, and decision_visible_digest. It is not copied into "
+    "search_logs, runtime trace payloads, or mutable case context."
 )
 CLASS_C_CONTEXT_POLICY = (
     "Mutable case context stores a class-C marker for caller notes. It does "
@@ -65,9 +67,6 @@ _RETRIEVAL_STATES = frozenset(
 )
 _CASE_ID = re.compile(r"^case1-[0-9a-f]{32}$")
 _RUN_ID = re.compile(r"^[0-9a-f]{32}$")
-_EVIDENCE_ID = re.compile(r"^ev1-[0-9a-f]{64}$")
-_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
-_PDF_SHA = re.compile(r"^[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z0-9_]{1,64}$")
 _MARKER = re.compile(r"^redacted:[0-9a-f]{12}:chars=\d+(?::omitted)?$")
 _TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$")
@@ -85,17 +84,32 @@ class CaseStoreError(Exception):
 class CaseEvidence:
     evidence_id: str
     snapshot_schema_version: str
-    supporting_original_text: str
-    document_lifecycle: str
-    product_lifecycle: str | None
-    authority_level: str
-    original_content_digest: str
-    decision_visible_representation: str
-    decision_visible_digest: str
+    document_id: int
+    document_identity: str
+    filename: str
     pdf_sha256: str
     page_number: int
-    document_identity: str
+    source_locator: str
+    source_url: str
+    supporting_original_text: str
+    supporting_text_source: str
+    original_content_digest: str
+    metadata_digest: str
+    canonical_product_id: int | None
+    canonical_product_name: str | None
+    product_lifecycle: str | None
+    document_lifecycle: str
+    firmware_range: str
+    firmware_applicability: str
+    authority_level: str
+    retrieval_tool_name: str
+    retrieval_tool_version: str
+    retrieval_response_schema_version: str
     captured_at: str
+    decision_visible_representation: str
+    decision_visible_digest: str
+    decision_visible_source: str
+    transformation_version: str
     source_policy: str
     visible_policy: str
 
@@ -174,28 +188,51 @@ def create_case(
         for item in evidence:
             connection.execute(
                 """INSERT INTO case_evidence (
-                       case_id, evidence_id, snapshot_schema_version,
-                       supporting_original_text, document_lifecycle,
-                       product_lifecycle, authority_level, original_content_digest,
-                       decision_visible_representation, decision_visible_digest,
-                       pdf_sha256, page_number, document_identity, captured_at,
-                       source_policy, visible_policy
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       case_id, evidence_id, snapshot_schema_version, document_id,
+                       document_identity, filename, pdf_sha256, page_number,
+                       source_locator, source_url, supporting_original_text,
+                       supporting_text_source, original_content_digest,
+                       metadata_digest, canonical_product_id, canonical_product_name,
+                       product_lifecycle, document_lifecycle, firmware_range,
+                       firmware_applicability, authority_level, retrieval_tool_name,
+                       retrieval_tool_version, retrieval_response_schema_version,
+                       captured_at, decision_visible_representation,
+                       decision_visible_digest, decision_visible_source,
+                       transformation_version, source_policy, visible_policy
+                   ) VALUES (
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                   )""",
                 (
                     stored_case_id,
                     item.evidence_id,
                     item.snapshot_schema_version,
-                    item.supporting_original_text,
-                    item.document_lifecycle,
-                    item.product_lifecycle,
-                    item.authority_level,
-                    item.original_content_digest,
-                    item.decision_visible_representation,
-                    item.decision_visible_digest,
+                    item.document_id,
+                    item.document_identity,
+                    item.filename,
                     item.pdf_sha256,
                     item.page_number,
-                    item.document_identity,
+                    item.source_locator,
+                    item.source_url,
+                    item.supporting_original_text,
+                    item.supporting_text_source,
+                    item.original_content_digest,
+                    item.metadata_digest,
+                    item.canonical_product_id,
+                    item.canonical_product_name,
+                    item.product_lifecycle,
+                    item.document_lifecycle,
+                    item.firmware_range,
+                    item.firmware_applicability,
+                    item.authority_level,
+                    item.retrieval_tool_name,
+                    item.retrieval_tool_version,
+                    item.retrieval_response_schema_version,
                     item.captured_at,
+                    item.decision_visible_representation,
+                    item.decision_visible_digest,
+                    item.decision_visible_source,
+                    item.transformation_version,
                     item.source_policy,
                     item.visible_policy,
                 ),
@@ -231,11 +268,17 @@ def read_case(connection: sqlite3.Connection, case_id: str) -> CaseRecord:
     if row is None:
         _missing()
     evidence_rows = connection.execute(
-        """SELECT evidence_id, snapshot_schema_version, supporting_original_text,
-                  document_lifecycle, product_lifecycle, authority_level,
-                  original_content_digest, decision_visible_representation,
-                  decision_visible_digest, pdf_sha256, page_number,
-                  document_identity, captured_at, source_policy, visible_policy
+        """SELECT evidence_id, snapshot_schema_version, document_id,
+                  document_identity, filename, pdf_sha256, page_number,
+                  source_locator, source_url, supporting_original_text,
+                  supporting_text_source, original_content_digest, metadata_digest,
+                  canonical_product_id, canonical_product_name, product_lifecycle,
+                  document_lifecycle, firmware_range, firmware_applicability,
+                  authority_level, retrieval_tool_name, retrieval_tool_version,
+                  retrieval_response_schema_version, captured_at,
+                  decision_visible_representation, decision_visible_digest,
+                  decision_visible_source, transformation_version, source_policy,
+                  visible_policy
            FROM case_evidence WHERE case_id = ? ORDER BY id""",
         (case_id,),
     ).fetchall()
@@ -320,53 +363,11 @@ def _evidence_rows(
 
 
 def _copy_snapshot(item: EvidenceSnapshot) -> CaseEvidence:
-    if not isinstance(item, EvidenceSnapshot):
+    if not snapshot_integrity_ok(item):
         _invalid()
-    if item.snapshot_schema_version != SNAPSHOT_SCHEMA_VERSION:
+    if not isinstance(item.captured_at, str) or _TIMESTAMP.fullmatch(item.captured_at) is None:
         _invalid()
-    if _EVIDENCE_ID.fullmatch(item.evidence_id) is None:
-        _invalid()
-    if _DIGEST.fullmatch(item.original_content_digest) is None:
-        _invalid()
-    if _DIGEST.fullmatch(item.decision_visible_digest) is None:
-        _invalid()
-    if _PDF_SHA.fullmatch(item.pdf_sha256) is None:
-        _invalid()
-    if item.document_identity != f"sha256:{item.pdf_sha256}":
-        _invalid()
-    if isinstance(item.page_number, bool) or not isinstance(item.page_number, int):
-        _invalid()
-    if item.page_number < 1:
-        _invalid()
-    if not isinstance(item.supporting_original_text, str):
-        _invalid()
-    if not isinstance(item.decision_visible_representation, str):
-        _invalid()
-    if not isinstance(item.document_lifecycle, str):
-        _invalid()
-    if not isinstance(item.authority_level, str):
-        _invalid()
-    if item.product_lifecycle is not None and not isinstance(item.product_lifecycle, str):
-        _invalid()
-    if _TIMESTAMP.fullmatch(item.captured_at) is None:
-        _invalid()
-    return CaseEvidence(
-        evidence_id=item.evidence_id,
-        snapshot_schema_version=item.snapshot_schema_version,
-        supporting_original_text=item.supporting_original_text,
-        document_lifecycle=item.document_lifecycle,
-        product_lifecycle=item.product_lifecycle,
-        authority_level=item.authority_level,
-        original_content_digest=item.original_content_digest,
-        decision_visible_representation=item.decision_visible_representation,
-        decision_visible_digest=item.decision_visible_digest,
-        pdf_sha256=item.pdf_sha256,
-        page_number=item.page_number,
-        document_identity=item.document_identity,
-        captured_at=item.captured_at,
-        source_policy=CLASS_A_POLICY,
-        visible_policy=CLASS_B_POLICY,
-    )
+    return _case_evidence(item, CLASS_A_POLICY, CLASS_B_POLICY)
 
 
 def _reason_codes(decision: EvidenceDecision) -> tuple[str, ...]:
@@ -434,34 +435,110 @@ def _parse_reasons(payload: object) -> tuple[str, ...]:
 
 
 def _row_evidence(row: sqlite3.Row) -> CaseEvidence:
-    page_number = row["page_number"]
-    if isinstance(page_number, bool) or not isinstance(page_number, int) or page_number < 1:
+    source_policy = _required_text(row["source_policy"])
+    visible_policy = _required_text(row["visible_policy"])
+    if source_policy != CLASS_A_POLICY or visible_policy != CLASS_B_POLICY:
         _invalid()
-    product_lifecycle = row["product_lifecycle"]
-    if product_lifecycle is not None:
-        product_lifecycle = str(product_lifecycle)
-    item = CaseEvidence(
-        evidence_id=str(row["evidence_id"]),
-        snapshot_schema_version=str(row["snapshot_schema_version"]),
-        supporting_original_text=str(row["supporting_original_text"]),
-        document_lifecycle=str(row["document_lifecycle"]),
-        product_lifecycle=product_lifecycle,
-        authority_level=str(row["authority_level"]),
-        original_content_digest=str(row["original_content_digest"]),
-        decision_visible_representation=str(row["decision_visible_representation"]),
-        decision_visible_digest=str(row["decision_visible_digest"]),
-        pdf_sha256=str(row["pdf_sha256"]),
-        page_number=page_number,
-        document_identity=str(row["document_identity"]),
-        captured_at=str(row["captured_at"]),
-        source_policy=str(row["source_policy"]),
-        visible_policy=str(row["visible_policy"]),
+    snapshot = EvidenceSnapshot(
+        evidence_id=_required_text(row["evidence_id"]),
+        snapshot_schema_version=_required_text(row["snapshot_schema_version"]),
+        document_id=_positive_int(row["document_id"]),
+        document_identity=_required_text(row["document_identity"]),
+        filename=_required_text(row["filename"]),
+        pdf_sha256=_required_text(row["pdf_sha256"]),
+        page_number=_positive_int(row["page_number"]),
+        source_locator=_required_text(row["source_locator"]),
+        source_url=_required_text(row["source_url"]),
+        supporting_original_text=_required_text(row["supporting_original_text"]),
+        supporting_text_source=_required_text(row["supporting_text_source"]),
+        original_content_digest=_required_text(row["original_content_digest"]),
+        metadata_digest=_required_text(row["metadata_digest"]),
+        canonical_product_id=_optional_product_id(row["canonical_product_id"]),
+        canonical_product_name=_optional_text(row["canonical_product_name"]),
+        product_lifecycle=_optional_text(row["product_lifecycle"]),
+        document_lifecycle=_required_text(row["document_lifecycle"]),
+        firmware_range=_required_text(row["firmware_range"]),
+        firmware_applicability=_required_text(row["firmware_applicability"]),
+        authority_level=_required_text(row["authority_level"]),
+        retrieval_tool_name=_required_text(row["retrieval_tool_name"]),
+        retrieval_tool_version=_required_text(row["retrieval_tool_version"]),
+        retrieval_response_schema_version=_required_text(
+            row["retrieval_response_schema_version"]
+        ),
+        captured_at=_required_text(row["captured_at"]),
+        decision_visible_representation=_required_text(row["decision_visible_representation"]),
+        decision_visible_digest=_required_text(row["decision_visible_digest"]),
+        decision_visible_source=_required_text(row["decision_visible_source"]),
+        transformation_version=_required_text(row["transformation_version"]),
     )
-    if item.source_policy != CLASS_A_POLICY or item.visible_policy != CLASS_B_POLICY:
+    if not snapshot_integrity_ok(snapshot):
         _invalid()
-    if item.snapshot_schema_version != SNAPSHOT_SCHEMA_VERSION:
+    if _TIMESTAMP.fullmatch(snapshot.captured_at) is None:
         _invalid()
-    return item
+    return _case_evidence(snapshot, source_policy, visible_policy)
+
+
+def _case_evidence(
+    item: EvidenceSnapshot,
+    source_policy: str,
+    visible_policy: str,
+) -> CaseEvidence:
+    return CaseEvidence(
+        evidence_id=item.evidence_id,
+        snapshot_schema_version=item.snapshot_schema_version,
+        document_id=item.document_id,
+        document_identity=item.document_identity,
+        filename=item.filename,
+        pdf_sha256=item.pdf_sha256,
+        page_number=item.page_number,
+        source_locator=item.source_locator,
+        source_url=item.source_url,
+        supporting_original_text=item.supporting_original_text,
+        supporting_text_source=item.supporting_text_source,
+        original_content_digest=item.original_content_digest,
+        metadata_digest=item.metadata_digest,
+        canonical_product_id=item.canonical_product_id,
+        canonical_product_name=item.canonical_product_name,
+        product_lifecycle=item.product_lifecycle,
+        document_lifecycle=item.document_lifecycle,
+        firmware_range=item.firmware_range,
+        firmware_applicability=item.firmware_applicability,
+        authority_level=item.authority_level,
+        retrieval_tool_name=item.retrieval_tool_name,
+        retrieval_tool_version=item.retrieval_tool_version,
+        retrieval_response_schema_version=item.retrieval_response_schema_version,
+        captured_at=item.captured_at,
+        decision_visible_representation=item.decision_visible_representation,
+        decision_visible_digest=item.decision_visible_digest,
+        decision_visible_source=item.decision_visible_source,
+        transformation_version=item.transformation_version,
+        source_policy=source_policy,
+        visible_policy=visible_policy,
+    )
+
+
+def _required_text(value: object) -> str:
+    if not isinstance(value, str):
+        _invalid()
+    return value
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    return _required_text(value)
+
+
+def _positive_int(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        _invalid()
+    return value
+
+
+def _optional_product_id(value: object) -> int | None:
+    if value is None:
+        return None
+    return _positive_int(value)
 
 
 def _require_durable(connection: sqlite3.Connection) -> None:

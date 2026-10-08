@@ -165,6 +165,19 @@ class EvidenceDecision:
 
 
 @dataclass(frozen=True)
+class EvidenceBinding:
+    """Digests and evidence id implied by snapshot content. Stored copies are ignored."""
+
+    original_content_digest: str
+    decision_visible_digest: str
+    metadata_digest: str
+    evidence_id: str
+    source_locator: str
+    document_identity: str
+    firmware_applicability: str
+
+
+@dataclass(frozen=True)
 class _ToolProvenance:
     tool_name: str
     tool_version: str
@@ -184,6 +197,76 @@ def classify_firmware(firmware_range: str, firmware_version: str | None) -> str:
     if firmware_range.strip() == "":
         return "applicable"
     return "unknown"
+
+
+def evidence_binding(snapshot: EvidenceSnapshot) -> EvidenceBinding:
+    """Recompute the G3 binding from snapshot content. This does not read a database."""
+
+    if not isinstance(snapshot, EvidenceSnapshot):
+        raise TypeError("snapshot must be an EvidenceSnapshot")
+    _require_identity_types(snapshot)
+    metadata = _metadata_document(
+        authority_level=snapshot.authority_level,
+        canonical_product_id=snapshot.canonical_product_id,
+        canonical_product_name=snapshot.canonical_product_name,
+        document_lifecycle=snapshot.document_lifecycle,
+        filename=snapshot.filename,
+        firmware_range=snapshot.firmware_range,
+        firmware_version=None,
+        page_number=snapshot.page_number,
+        pdf_sha256=snapshot.pdf_sha256,
+        product_lifecycle=snapshot.product_lifecycle,
+        source_url=snapshot.source_url,
+    )
+    content_digest = _digest(snapshot.supporting_original_text)
+    visible_digest = _digest(snapshot.decision_visible_representation)
+    metadata_digest = _digest(_canonical(metadata))
+    return EvidenceBinding(
+        original_content_digest=content_digest,
+        decision_visible_digest=visible_digest,
+        metadata_digest=metadata_digest,
+        evidence_id=_evidence_id(
+            snapshot.pdf_sha256,
+            snapshot.page_number,
+            content_digest,
+            metadata_digest,
+            visible_digest,
+            snapshot.retrieval_tool_name,
+            snapshot.retrieval_tool_version,
+            snapshot.retrieval_response_schema_version,
+        ),
+        source_locator=str(metadata["source_locator"]),
+        document_identity=f"sha256:{snapshot.pdf_sha256}",
+        firmware_applicability=str(metadata["firmware_applicability"]),
+    )
+
+
+def snapshot_integrity_ok(snapshot: EvidenceSnapshot) -> bool:
+    """Return whether stored digests, locator, applicability, and evidence id match."""
+
+    if not isinstance(snapshot, EvidenceSnapshot):
+        return False
+    if snapshot.snapshot_schema_version != SNAPSHOT_SCHEMA_VERSION:
+        return False
+    if snapshot.supporting_text_source != SUPPORTING_TEXT_SOURCE:
+        return False
+    if snapshot.decision_visible_source != DECISION_VISIBLE_SOURCE:
+        return False
+    if snapshot.transformation_version != TRANSFORMATION_VERSION:
+        return False
+    try:
+        binding = evidence_binding(snapshot)
+    except (TypeError, ValueError):
+        return False
+    return (
+        snapshot.document_identity == binding.document_identity
+        and snapshot.source_locator == binding.source_locator
+        and snapshot.firmware_applicability == binding.firmware_applicability
+        and snapshot.original_content_digest == binding.original_content_digest
+        and snapshot.decision_visible_digest == binding.decision_visible_digest
+        and snapshot.metadata_digest == binding.metadata_digest
+        and snapshot.evidence_id == binding.evidence_id
+    )
 
 
 def decide_evidence(packet: EvidencePacket) -> EvidenceDecision:
@@ -478,22 +561,19 @@ def _snapshot(
     visible = str(row.get("snippet") or "")
     content_digest = _digest(supporting_text)
     visible_digest = _digest(visible)
-    metadata = {
-        "authority_level": str(row.get("authority_level") or ""),
-        "canonical_product_id": product_id,
-        "canonical_product_name": product_name,
-        "document_lifecycle": str(row.get("status") or ""),
-        "filename": str(row.get("filename") or ""),
-        "firmware_applicability": classify_firmware(
-            str(row.get("firmware_range") or ""), firmware_version
-        ),
-        "firmware_range": str(row.get("firmware_range") or ""),
-        "page_number": page_number,
-        "pdf_sha256": pdf_sha256,
-        "product_lifecycle": _product_lifecycle(products, product_id),
-        "source_locator": f"sha256:{pdf_sha256}#page={page_number}",
-        "source_url": str(row.get("source_url") or ""),
-    }
+    metadata = _metadata_document(
+        authority_level=str(row.get("authority_level") or ""),
+        canonical_product_id=product_id,
+        canonical_product_name=product_name,
+        document_lifecycle=str(row.get("status") or ""),
+        filename=str(row.get("filename") or ""),
+        firmware_range=str(row.get("firmware_range") or ""),
+        firmware_version=firmware_version,
+        page_number=page_number,
+        pdf_sha256=pdf_sha256,
+        product_lifecycle=_product_lifecycle(products, product_id),
+        source_url=str(row.get("source_url") or ""),
+    )
     metadata_digest = _digest(_canonical(metadata))
     return EvidenceSnapshot(
         evidence_id=_evidence_id(
@@ -685,6 +765,79 @@ def _optional_int(value: object) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _metadata_document(
+    *,
+    authority_level: str,
+    canonical_product_id: int | None,
+    canonical_product_name: str | None,
+    document_lifecycle: str,
+    filename: str,
+    firmware_range: str,
+    firmware_version: str | None,
+    page_number: int,
+    pdf_sha256: str,
+    product_lifecycle: str | None,
+    source_url: str,
+) -> dict[str, object]:
+    return {
+        "authority_level": authority_level,
+        "canonical_product_id": canonical_product_id,
+        "canonical_product_name": canonical_product_name,
+        "document_lifecycle": document_lifecycle,
+        "filename": filename,
+        "firmware_applicability": classify_firmware(firmware_range, firmware_version),
+        "firmware_range": firmware_range,
+        "page_number": page_number,
+        "pdf_sha256": pdf_sha256,
+        "product_lifecycle": product_lifecycle,
+        "source_locator": f"sha256:{pdf_sha256}#page={page_number}",
+        "source_url": source_url,
+    }
+
+
+def _require_identity_types(snapshot: EvidenceSnapshot) -> None:
+    if not isinstance(snapshot.supporting_original_text, str):
+        raise TypeError("supporting text must be a string")
+    if not isinstance(snapshot.decision_visible_representation, str):
+        raise TypeError("decision-visible text must be a string")
+    for value in (
+        snapshot.authority_level,
+        snapshot.document_lifecycle,
+        snapshot.filename,
+        snapshot.firmware_range,
+        snapshot.source_url,
+        snapshot.pdf_sha256,
+        snapshot.retrieval_tool_name,
+        snapshot.retrieval_tool_version,
+        snapshot.retrieval_response_schema_version,
+    ):
+        if not isinstance(value, str):
+            raise TypeError("snapshot identity fields must be strings")
+    if snapshot.retrieval_tool_name == "" or snapshot.retrieval_tool_version == "":
+        raise ValueError("tool provenance is required")
+    if snapshot.retrieval_response_schema_version == "":
+        raise ValueError("response schema provenance is required")
+    if not isinstance(snapshot.page_number, int) or isinstance(snapshot.page_number, bool):
+        raise TypeError("page number must be an integer")
+    if snapshot.page_number < 1:
+        raise ValueError("page number must be positive")
+    if not isinstance(snapshot.document_id, int) or isinstance(snapshot.document_id, bool):
+        raise TypeError("document id must be an integer")
+    if snapshot.document_id < 1:
+        raise ValueError("document id must be positive")
+    product_id = snapshot.canonical_product_id
+    if product_id is not None and (
+        not isinstance(product_id, int) or isinstance(product_id, bool) or product_id < 1
+    ):
+        raise TypeError("canonical product id must be a positive integer or None")
+    if snapshot.canonical_product_name is not None and not isinstance(
+        snapshot.canonical_product_name, str
+    ):
+        raise TypeError("canonical product name must be a string or None")
+    if snapshot.product_lifecycle is not None and not isinstance(snapshot.product_lifecycle, str):
+        raise TypeError("product lifecycle must be a string or None")
 
 
 def _canonical(value: Mapping[str, object]) -> str:

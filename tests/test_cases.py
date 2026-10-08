@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,13 +37,22 @@ from support_knowledge_engine.evidence import (
     EvidencePacket,
     EvidenceSnapshot,
     RequestContext,
+    evidence_binding,
+    snapshot_integrity_ok,
 )
-from support_knowledge_engine.importer import import_directory
 from support_knowledge_engine.migrations import (
     MIGRATION_005_DATA_LOSS,
+    MIGRATION_006_DATA_LOSS,
     _migration_005_case_store,
+    _migration_006_case_evidence_fidelity,
     current_schema_version,
 )
+from support_knowledge_engine.retrieval_tool import (
+    RESPONSE_SCHEMA_VERSION,
+    TOOL_NAME,
+    TOOL_VERSION,
+)
+from support_knowledge_engine.importer import import_directory
 from support_knowledge_engine.repository import MATCH_STATE_LABELS
 from support_knowledge_engine.runtime import run_runtime
 from support_knowledge_engine.trace import (
@@ -107,6 +117,8 @@ class CaseContractTests(unittest.TestCase):
         self.assertIn("search_logs", CLASS_A_POLICY_TEXT)
         self.assertIn("Class B", CLASS_B_POLICY_TEXT)
         self.assertIn("class-C", CLASS_C_CONTEXT_POLICY)
+        self.assertIn("snapshot_integrity_ok", source)
+        self.assertNotIn("hashlib", source)
         for relative in (
             "support_knowledge_engine/importer.py",
             "support_knowledge_engine/routes.py",
@@ -156,7 +168,18 @@ class CaseBehaviorTests(unittest.TestCase):
                 (execution.run_id,),
             ).fetchone()
             self.assertEqual(trace["case_id"], case_id)
-            self.assertNotIn(SECRET_EMAIL, _joined(trace))
+            trace_blob = _joined(trace)
+            self.assertNotIn(SECRET_EMAIL, trace_blob)
+            self.assertNotIn(frozen.supporting_original_text, trace_blob)
+            self.assertNotIn(frozen.filename, trace_blob)
+            self.assertNotIn(frozen.source_url, trace_blob)
+            self.assertNotIn(frozen.canonical_product_name or "", trace_blob)
+            for log in connection.execute("SELECT * FROM search_logs"):
+                log_blob = _joined(log)
+                self.assertNotIn(SECRET_EMAIL, log_blob)
+                self.assertNotIn(frozen.supporting_original_text, log_blob)
+                self.assertNotIn(frozen.filename, log_blob)
+                self.assertNotIn(frozen.source_url, log_blob)
             self.assertEqual(
                 connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0],
                 0,
@@ -216,8 +239,36 @@ class CaseBehaviorTests(unittest.TestCase):
         self.assertTrue(str(created.context.note_marker).startswith("redacted:"))
         self.assertNotIn(_RAW_QUERY, created.context.note_marker or "")
         self.assertNotIn(SECRET_EMAIL, json.dumps(created.context.__dict__))
+        self.assertEqual(
+            set(json.loads(_case_context_blob(self.database, case_id))),
+            {"note_marker", "schema_version"},
+        )
+        context_blob = _case_context_blob(self.database, case_id)
+        self.assertNotIn(frozen.supporting_original_text, context_blob)
+        self.assertNotIn(frozen.filename, context_blob)
+        self.assertNotIn(frozen.source_url, context_blob)
+        self.assertNotIn(frozen.canonical_product_name or "", context_blob)
 
         reopened = _reopen_case(self.database, case_id)
+        self.assertTrue(snapshot_integrity_ok(_as_snapshot(reopened.evidence[0])))
+        self.assertEqual(reopened.evidence[0].evidence_id, frozen.evidence_id)
+        self.assertEqual(reopened.evidence[0].metadata_digest, frozen.metadata_digest)
+        self.assertEqual(reopened.evidence[0].firmware_range, frozen.firmware_range)
+        self.assertEqual(
+            reopened.evidence[0].firmware_applicability, frozen.firmware_applicability
+        )
+        self.assertEqual(reopened.evidence[0].retrieval_tool_name, frozen.retrieval_tool_name)
+        self.assertEqual(
+            reopened.evidence[0].retrieval_tool_version, frozen.retrieval_tool_version
+        )
+        self.assertEqual(
+            reopened.evidence[0].retrieval_response_schema_version,
+            frozen.retrieval_response_schema_version,
+        )
+        self.assertEqual(reopened.evidence[0].transformation_version, frozen.transformation_version)
+        self.assertEqual(reopened.evidence[0].source_locator, frozen.source_locator)
+        self.assertEqual(reopened.evidence[0].filename, frozen.filename)
+        self.assertEqual(reopened.evidence[0].document_id, frozen.document_id)
         self.assertEqual(
             reopened.evidence[0].supporting_original_text,
             frozen.supporting_original_text,
@@ -400,6 +451,72 @@ class CaseBehaviorTests(unittest.TestCase):
             packet.evidence[0].supporting_original_text,
         )
 
+    def test_forged_binding_is_rejected_and_consistent_provenance_round_trips(self) -> None:
+        packet, decision = _packet()
+        base = packet.evidence[0]
+        forgeries = (
+            {"original_content_digest": "sha256:" + "ff" * 32},
+            {"evidence_id": "ev1-" + "ff" * 32},
+            {"firmware_range": "9.9.9-forged", "firmware_applicability": "unknown"},
+            {"retrieval_tool_version": "9"},
+        )
+        with connect_database(self.database) as connection:
+            before = connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0]
+            for changes in forgeries:
+                forged_packet, forged_decision = _replace_evidence(packet, decision, **changes)
+                with self.assertRaises(CaseStoreError) as caught:
+                    create_case(connection, forged_packet, forged_decision)
+                self.assertEqual(caught.exception.error_type, CASE_INVALID)
+                self.assertEqual(str(caught.exception), CASE_INVALID_MESSAGE)
+                for value in changes.values():
+                    self.assertNotIn(str(value), str(caught.exception))
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM support_cases").fetchone()[0],
+                before,
+            )
+
+            ranged = replace(base, firmware_range="9.9.9-forged")
+            ranged_binding = evidence_binding(ranged)
+            ranged = replace(
+                ranged,
+                firmware_applicability=ranged_binding.firmware_applicability,
+                metadata_digest=ranged_binding.metadata_digest,
+                evidence_id=ranged_binding.evidence_id,
+            )
+            versioned = replace(ranged, retrieval_tool_version="2")
+            versioned_binding = evidence_binding(versioned)
+            versioned = replace(versioned, evidence_id=versioned_binding.evidence_id)
+            self.assertTrue(snapshot_integrity_ok(versioned))
+            self.assertNotEqual(versioned.evidence_id, base.evidence_id)
+            bound_packet, bound_decision = _replace_evidence(
+                packet,
+                decision,
+                firmware_range=versioned.firmware_range,
+                firmware_applicability=versioned.firmware_applicability,
+                metadata_digest=versioned.metadata_digest,
+                evidence_id=versioned.evidence_id,
+                retrieval_tool_version=versioned.retrieval_tool_version,
+            )
+            created = create_case(connection, bound_packet, bound_decision, note=base.filename)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM search_logs").fetchone()[0],
+                0,
+            )
+        reopened = _reopen_case(self.database, created.case_id)
+        stored = reopened.evidence[0]
+        self.assertTrue(snapshot_integrity_ok(_as_snapshot(stored)))
+        self.assertEqual(stored.firmware_range, "9.9.9-forged")
+        self.assertEqual(stored.firmware_applicability, "unknown")
+        self.assertEqual(stored.retrieval_tool_version, "2")
+        self.assertEqual(stored.evidence_id, versioned.evidence_id)
+        self.assertEqual(stored.metadata_digest, versioned.metadata_digest)
+        context_blob = _case_context_blob(self.database, created.case_id)
+        self.assertNotIn(base.supporting_original_text, context_blob)
+        self.assertNotIn(base.filename, context_blob)
+        self.assertNotIn(base.source_url, context_blob)
+        self.assertNotIn("9.9.9-forged", context_blob)
+        self.assertNotIn(base.filename, reopened.context.note_marker or "")
+
     def test_import_does_not_create_a_case(self) -> None:
         pdf_dir = Path(self.temp.name) / "incoming"
         pdf_dir.mkdir()
@@ -461,7 +578,7 @@ class CaseMigrationTests(unittest.TestCase):
 
             init_database(database)
             with connect_database(database) as connection:
-                self.assertEqual(current_schema_version(connection), 5)
+                self.assertEqual(current_schema_version(connection), 6)
                 _migration_005_case_store(connection)
                 _migration_005_case_store(connection)
                 version_rows = connection.execute(
@@ -491,7 +608,7 @@ class CaseMigrationTests(unittest.TestCase):
                 )
             self.assertEqual(version_rows, 1)
             migrated, migrated_details = create_backup(database, root / "migrated")
-            self.assertEqual(migrated_details["schema_version"], 5)
+            self.assertEqual(migrated_details["schema_version"], 6)
 
             restored = restore_backup(pre_backup, database, confirm=True)
             self.assertEqual(restored["schema_version"], 4)
@@ -517,10 +634,120 @@ class CaseMigrationTests(unittest.TestCase):
         self.assertEqual(document["filename"], "pre-g5-durable.pdf")
         self.assertEqual(document["sha256"], "c" * 64)
 
+    def test_pre_migration_6_backup_drops_fidelity_columns(self) -> None:
+        self.assertEqual(
+            MIGRATION_006_DATA_LOSS,
+            "Restoring a backup taken before migration 6 discards case_evidence "
+            "identity, metadata digest, firmware applicability, tool provenance, "
+            "transformation version, and source locator values written after that "
+            "migration, and discards support_cases, case_evidence, and "
+            "case_trace_links rows written after that backup.",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "g6-1.db"
+            _migrate_through(database, 5)
+            _seed_durable_document(database)
+            legacy_case = allocate_case_id()
+            legacy_text = "legacy forged page"
+            connection = sqlite3.connect(database)
+            try:
+                connection.execute(
+                    """INSERT INTO support_cases (
+                           case_id, created_at, context_json, context_schema_version,
+                           context_updated_at, decision_type, reason_codes_json,
+                           retrieval_state, packet_schema_version
+                       ) VALUES (?, '2026-01-01T00:00:00+00:00', ?, '1',
+                                 '2026-01-01T00:00:00+00:00', 'abstain', '[]',
+                                 'insufficient_evidence', '2')""",
+                    (
+                        legacy_case,
+                        json.dumps(
+                            {"note_marker": None, "schema_version": "1"},
+                            sort_keys=True,
+                        ),
+                    ),
+                )
+                connection.execute(
+                    """INSERT INTO case_evidence (
+                           case_id, evidence_id, snapshot_schema_version,
+                           supporting_original_text, document_lifecycle,
+                           product_lifecycle, authority_level, original_content_digest,
+                           decision_visible_representation, decision_visible_digest,
+                           pdf_sha256, page_number, document_identity, captured_at,
+                           source_policy, visible_policy
+                       ) VALUES (?, ?, '3', ?, 'effective', 'active', 'reference',
+                                 ?, 'visible', ?, ?, 1, ?, '2026-01-01T00:00:00+00:00',
+                                 ?, ?)""",
+                    (
+                        legacy_case,
+                        "ev1-" + "ab" * 32,
+                        legacy_text,
+                        "sha256:" + "11" * 32,
+                        "sha256:" + "33" * 32,
+                        "cd" * 32,
+                        "sha256:" + "cd" * 32,
+                        CLASS_A_POLICY,
+                        CLASS_B_POLICY,
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            pre_backup, pre_details = create_backup(database, root / "before-006", migrate=False)
+            self.assertEqual(pre_details["schema_version"], 5)
+            with connect_database(database) as connection:
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(case_evidence)")
+                }
+                self.assertNotIn("metadata_digest", columns)
+
+            init_database(database)
+            with connect_database(database) as connection:
+                self.assertEqual(current_schema_version(connection), 6)
+                _migration_006_case_evidence_fidelity(connection)
+                _migration_006_case_evidence_fidelity(connection)
+                version_rows = connection.execute(
+                    "SELECT COUNT(*) FROM schema_migrations WHERE version = 6"
+                ).fetchone()[0]
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(case_evidence)")
+                }
+                self.assertIn("metadata_digest", columns)
+                self.assertIn("retrieval_tool_version", columns)
+                with self.assertRaises(CaseStoreError) as caught:
+                    read_case(connection, legacy_case)
+                self.assertEqual(caught.exception.error_type, CASE_INVALID)
+                self.assertNotIn(legacy_text, str(caught.exception))
+                packet, decision = _packet()
+                created = create_case(connection, packet, decision)
+            self.assertEqual(version_rows, 1)
+            reopened = _reopen_case(database, created.case_id)
+            self.assertTrue(snapshot_integrity_ok(_as_snapshot(reopened.evidence[0])))
+
+            restored = restore_backup(pre_backup, database, confirm=True)
+            self.assertEqual(restored["schema_version"], 5)
+            with connect_database(database) as connection:
+                self.assertEqual(current_schema_version(connection), 5)
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(case_evidence)")
+                }
+                self.assertNotIn("metadata_digest", columns)
+                self.assertNotIn("retrieval_tool_version", columns)
+                remaining = connection.execute(
+                    "SELECT case_id FROM support_cases"
+                ).fetchall()
+                document = connection.execute(
+                    "SELECT filename, sha256 FROM documents"
+                ).fetchone()
+        self.assertEqual([row["case_id"] for row in remaining], [legacy_case])
+        self.assertEqual(document["filename"], "pre-g5-durable.pdf")
+        self.assertEqual(document["sha256"], "c" * 64)
+
 
 def _packet(original_query: str = _RAW_QUERY) -> tuple[EvidencePacket, EvidenceDecision]:
     pdf_sha = "cd" * 32
-    snapshot = EvidenceSnapshot(
+    draft = EvidenceSnapshot(
         evidence_id="ev1-" + "ab" * 32,
         snapshot_schema_version=SNAPSHOT_SCHEMA_VERSION,
         document_id=1,
@@ -541,14 +768,25 @@ def _packet(original_query: str = _RAW_QUERY) -> tuple[EvidencePacket, EvidenceD
         firmware_range="",
         firmware_applicability="applicable",
         authority_level="reference",
-        retrieval_tool_name="knowledge-store-retrieval",
-        retrieval_tool_version="1",
-        retrieval_response_schema_version="1",
+        retrieval_tool_name=TOOL_NAME,
+        retrieval_tool_version=TOOL_VERSION,
+        retrieval_response_schema_version=RESPONSE_SCHEMA_VERSION,
         captured_at="2026-01-01T00:00:00+00:00",
         decision_visible_representation="frozen visible",
         decision_visible_digest="sha256:" + "33" * 32,
         decision_visible_source="G2 retrieval snippet",
         transformation_version="retrieval-excerpt-v1",
+    )
+    binding = evidence_binding(draft)
+    snapshot = replace(
+        draft,
+        evidence_id=binding.evidence_id,
+        document_identity=binding.document_identity,
+        source_locator=binding.source_locator,
+        original_content_digest=binding.original_content_digest,
+        metadata_digest=binding.metadata_digest,
+        firmware_applicability=binding.firmware_applicability,
+        decision_visible_digest=binding.decision_visible_digest,
     )
     packet = EvidencePacket(
         packet_schema_version=PACKET_SCHEMA_VERSION,
@@ -571,9 +809,9 @@ def _packet(original_query: str = _RAW_QUERY) -> tuple[EvidencePacket, EvidenceD
         alias_conflict=False,
         evidence=(snapshot,),
         captured_at="2026-01-01T00:00:00+00:00",
-        retrieval_tool_name="knowledge-store-retrieval",
-        retrieval_tool_version="1",
-        retrieval_response_schema_version="1",
+        retrieval_tool_name=TOOL_NAME,
+        retrieval_tool_version=TOOL_VERSION,
+        retrieval_response_schema_version=RESPONSE_SCHEMA_VERSION,
     )
     decision = EvidenceDecision(
         decision_type="supported",
@@ -583,6 +821,51 @@ def _packet(original_query: str = _RAW_QUERY) -> tuple[EvidencePacket, EvidenceD
         packet_schema_version=PACKET_SCHEMA_VERSION,
     )
     return packet, decision
+
+
+def _replace_evidence(
+    packet: EvidencePacket,
+    decision: EvidenceDecision,
+    **changes: object,
+) -> tuple[EvidencePacket, EvidenceDecision]:
+    snapshot = replace(packet.evidence[0], **changes)
+    return (
+        replace(packet, evidence=(snapshot,)),
+        replace(decision, evidence_ids=(snapshot.evidence_id,)),
+    )
+
+
+def _as_snapshot(item: object) -> EvidenceSnapshot:
+    return EvidenceSnapshot(
+        evidence_id=item.evidence_id,
+        snapshot_schema_version=item.snapshot_schema_version,
+        document_id=item.document_id,
+        document_identity=item.document_identity,
+        filename=item.filename,
+        pdf_sha256=item.pdf_sha256,
+        page_number=item.page_number,
+        source_locator=item.source_locator,
+        source_url=item.source_url,
+        supporting_original_text=item.supporting_original_text,
+        supporting_text_source=item.supporting_text_source,
+        original_content_digest=item.original_content_digest,
+        metadata_digest=item.metadata_digest,
+        canonical_product_id=item.canonical_product_id,
+        canonical_product_name=item.canonical_product_name,
+        product_lifecycle=item.product_lifecycle,
+        document_lifecycle=item.document_lifecycle,
+        firmware_range=item.firmware_range,
+        firmware_applicability=item.firmware_applicability,
+        authority_level=item.authority_level,
+        retrieval_tool_name=item.retrieval_tool_name,
+        retrieval_tool_version=item.retrieval_tool_version,
+        retrieval_response_schema_version=item.retrieval_response_schema_version,
+        captured_at=item.captured_at,
+        decision_visible_representation=item.decision_visible_representation,
+        decision_visible_digest=item.decision_visible_digest,
+        decision_visible_source=item.decision_visible_source,
+        transformation_version=item.transformation_version,
+    )
 
 
 def _reopen_case(database: Path, case_id: str):

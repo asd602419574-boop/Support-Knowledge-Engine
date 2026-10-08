@@ -408,12 +408,46 @@ def _migration_005_case_store(connection: sqlite3.Connection) -> None:
     )
 
 
+# Code revert does not roll the database back. Restoring a backup taken before
+# migration 6 discards fidelity columns and case rows written after it.
+MIGRATION_006_DATA_LOSS = (
+    "Restoring a backup taken before migration 6 discards case_evidence "
+    "identity, metadata digest, firmware applicability, tool provenance, "
+    "transformation version, and source locator values written after that "
+    "migration, and discards support_cases, case_evidence, and "
+    "case_trace_links rows written after that backup."
+)
+
+
+def _migration_006_case_evidence_fidelity(connection: sqlite3.Connection) -> None:
+    # execute keeps this migration inside apply_migrations' transaction.
+    for definition in (
+        "document_id INTEGER",
+        "filename TEXT",
+        "source_locator TEXT",
+        "source_url TEXT",
+        "supporting_text_source TEXT",
+        "metadata_digest TEXT",
+        "canonical_product_id INTEGER",
+        "canonical_product_name TEXT",
+        "firmware_range TEXT",
+        "firmware_applicability TEXT",
+        "retrieval_tool_name TEXT",
+        "retrieval_tool_version TEXT",
+        "retrieval_response_schema_version TEXT",
+        "decision_visible_source TEXT",
+        "transformation_version TEXT",
+    ):
+        _add_column(connection, "case_evidence", definition)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "phase 1 baseline", _migration_001_baseline),
     (2, "knowledge governance and lifecycle", _migration_002_governance),
     (3, "controlled corpus acquisition and search observability", _migration_003_corpus_pilot),
     (4, "runtime trace", _migration_004_runtime_trace),
     (5, "case store", _migration_005_case_store),
+    (6, "case evidence fidelity", _migration_006_case_evidence_fidelity),
 )
 
 

@@ -425,7 +425,7 @@ class RetrievalToolTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(tables_before, tables_after)
         self.assertEqual(columns, _LOG_COLUMNS)
-        self.assertEqual(schema_version, 5)
+        self.assertEqual(schema_version, 6)
         stored = " ".join(str(log[name]) for name in log.keys())
         self.assertNotIn("ACM2 gimbal home sensor", stored)
         self.assertEqual(response["result"]["original_query"], "ACM2 gimbal home sensor")
