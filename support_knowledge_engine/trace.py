@@ -18,7 +18,7 @@ from typing import NoReturn
 
 from .evidence import EvidencePacket, EvidenceSnapshot
 from .governance import DOCUMENT_STATUS_LABELS
-from .runtime import RuntimeRequest, RuntimeResult, run_runtime
+from .runtime import RUNTIME_REQUEST_SCHEMA_VERSION, RuntimeRequest, RuntimeResult, run_runtime
 from .search_telemetry import class_c_query_text
 
 
@@ -249,7 +249,7 @@ def project_class_c_record(
         request_schema_version=request_schema_version,
         response_schema_version=response_schema_version,
         runtime_request_schema_version=(
-            result.request.request_schema_version
+            _trace_runtime_request_schema_version(result.request.request_schema_version)
             if isinstance(result.request, RuntimeRequest)
             else None
         ),
@@ -335,7 +335,9 @@ def _input_payload(request: object) -> dict[str, object]:
     else:
         stored_firmware = None
     return {
-        "request_schema_version": request.request_schema_version,
+        "request_schema_version": _trace_runtime_request_schema_version(
+            request.request_schema_version
+        ),
         "query": _class_c_query(request.query),
         "product_id": _class_c_filter(request.product_id, field="product_id"),
         "product_series": _class_c_filter(request.product_series, field="product_series"),
@@ -344,6 +346,14 @@ def _input_payload(request: object) -> dict[str, object]:
         "association": _class_c_filter(request.association, field="association"),
         "firmware_version": stored_firmware,
     }
+
+
+def _trace_runtime_request_schema_version(value: object) -> str | None:
+    """Keep only the exact trusted runtime request schema version."""
+
+    if value == RUNTIME_REQUEST_SCHEMA_VERSION:
+        return RUNTIME_REQUEST_SCHEMA_VERSION
+    return None
 
 
 def _class_c_query(value: object) -> str:
@@ -508,6 +518,8 @@ def _assert_record_shape(record: TraceRecord) -> None:
         value = getattr(record, name)
         if value is not None and not _safe_token(value):
             _refuse()
+    if not _accepted_runtime_request_schema_version(record.runtime_request_schema_version):
+        _refuse()
     if not _safe_token(record.runtime_version) or not _safe_token(record.runtime_response_schema_version):
         _refuse()
     _walk(record.input_payload)
@@ -525,6 +537,10 @@ def _assert_record_shape(record: TraceRecord) -> None:
 
 def _walk(value: object, *, key: str | None = None) -> None:
     if key in _FORBIDDEN_KEYS:
+        _refuse()
+    if key == "request_schema_version":
+        if _accepted_runtime_request_schema_version(value):
+            return
         _refuse()
     if key in _MARKER_ONLY_KEYS:
         if value is None:
@@ -582,6 +598,10 @@ def _allowed_string(value: str) -> bool:
         or _VERSION.fullmatch(value)
         or _TIMESTAMP.fullmatch(value)
     )
+
+
+def _accepted_runtime_request_schema_version(value: object) -> bool:
+    return value is None or value == RUNTIME_REQUEST_SCHEMA_VERSION
 
 
 def _safe_token(value: object) -> bool:

@@ -534,6 +534,123 @@ class TraceBehaviorTests(unittest.TestCase):
         self.assertTrue(str(traced_payload["product_id"]).startswith("redacted:"))
         self.assertNotEqual(traced_payload["product_id"], real_id)
 
+    def test_illegal_request_schema_version_is_not_stored_raw(self) -> None:
+        self._write_case()
+        illegal_versions = ("13800138000", "T12345", "9F3K2LQ8")
+        for illegal in illegal_versions:
+            request = replace(_request(), request_schema_version=illegal)
+            with connect_database(self.database) as connection:
+                with (
+                    _spies({"wraps": retrieve_with_context}) as (tool, core, decide, runtime_spy),
+                    patch("support_knowledge_engine.runtime.capture_evidence_packet") as capture,
+                ):
+                    execution = execute_traced_runtime(connection, request)
+            self.assertEqual(runtime_spy.call_count, 1)
+            self.assertEqual(
+                (capture.call_count, tool.call_count, core.call_count, decide.call_count),
+                (0, 0, 0, 0),
+            )
+            self.assertFalse(execution.runtime.ok)
+            assert execution.runtime.error is not None
+            self.assertEqual(execution.runtime.error.type, "invalid_request")
+            self.assertNotEqual(execution.runtime.error.type, "abstain")
+            self.assertIsNone(execution.runtime.packet)
+            self.assertIsNone(execution.runtime.decision)
+            assert isinstance(execution.runtime.request, RuntimeRequest)
+            self.assertEqual(execution.runtime.request.request_schema_version, illegal)
+            self.assertTrue(execution.trace_ok, execution.error)
+            self.assertIsNone(execution.error)
+            run_id = execution.run_id
+            self.assertIsNotNone(run_id)
+            with connect_database(self.database) as connection:
+                row = connection.execute(
+                    "SELECT * FROM runtime_traces WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+            assert row is not None
+            payload = json.loads(row["input_json"])
+            self.assertIsNone(row["runtime_request_schema_version"])
+            self.assertIsNone(payload["request_schema_version"])
+            self.assertNotEqual(row["runtime_request_schema_version"], "1")
+            self.assertNotEqual(payload["request_schema_version"], "1")
+            self.assertEqual(row["termination_reason"], "invalid_request")
+            self.assertNotIn(illegal, _stored(row))
+            self.assertEqual(row["run_id"], run_id)
+
+        legal, legal_row, *_rest = self._run(_request())
+        self.assertTrue(legal.trace_ok, legal.error)
+        self.assertEqual(legal_row["runtime_request_schema_version"], RUNTIME_REQUEST_SCHEMA_VERSION)
+        self.assertEqual(
+            json.loads(legal_row["input_json"])["request_schema_version"],
+            RUNTIME_REQUEST_SCHEMA_VERSION,
+        )
+        with connect_database(self.database) as connection:
+            reopened = connection.execute(
+                "SELECT * FROM runtime_traces WHERE run_id = ?",
+                (legal.run_id,),
+            ).fetchone()
+        assert reopened is not None
+        self.assertEqual(reopened["runtime_request_schema_version"], "1")
+        self.assertEqual(json.loads(reopened["input_json"])["request_schema_version"], "1")
+
+        with connect_database(self.database) as connection:
+            result = run_runtime(connection, _request())
+            projected = project_class_c_record(
+                result,
+                0.0,
+                run_id="ef" * 16,
+                created_at="2026-01-03T00:00:00+00:00",
+            )
+            for illegal in illegal_versions:
+                forged = (
+                    replace(projected, runtime_request_schema_version=illegal),
+                    replace(
+                        projected,
+                        input_payload={
+                            **projected.input_payload,
+                            "request_schema_version": illegal,
+                        },
+                    ),
+                    replace(
+                        projected,
+                        runtime_request_schema_version=illegal,
+                        input_payload={
+                            **projected.input_payload,
+                            "request_schema_version": illegal,
+                        },
+                    ),
+                )
+                for record in forged:
+                    with self.assertRaises(TracePersistenceError) as caught:
+                        commit_class_c_trace(connection, record)
+                    self.assertEqual(caught.exception.error_type, REDACTION_REFUSAL)
+                    self.assertNotIn(illegal, str(caught.exception))
+            absent = connection.execute(
+                "SELECT COUNT(*) FROM runtime_traces WHERE run_id = ?",
+                (projected.run_id,),
+            ).fetchone()[0]
+        self.assertEqual(absent, 0)
+        with connect_database(self.database) as connection:
+            absent_again = connection.execute(
+                "SELECT COUNT(*) FROM runtime_traces WHERE run_id = ?",
+                (projected.run_id,),
+            ).fetchone()[0]
+            leaked = connection.execute(
+                """SELECT COUNT(*) FROM runtime_traces
+                   WHERE runtime_request_schema_version IN (?, ?, ?)
+                      OR input_json LIKE ?
+                      OR input_json LIKE ?
+                      OR input_json LIKE ?""",
+                (
+                    *illegal_versions,
+                    "%13800138000%",
+                    "%T12345%",
+                    "%9F3K2LQ8%",
+                ),
+            ).fetchone()[0]
+        self.assertEqual(absent_again, 0)
+        self.assertEqual(leaked, 0)
+
     def test_unsafe_payload_is_not_inserted(self) -> None:
         self._write_case()
         with connect_database(self.database) as connection:
