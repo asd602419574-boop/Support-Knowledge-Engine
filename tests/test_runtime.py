@@ -340,6 +340,18 @@ class RuntimeExecutionTests(unittest.TestCase):
         self.assertIs(result.request, request)
         self.assertEqual(result.error and result.error.message, "request_schema_version 不受支持。")
 
+    def test_non_string_firmware_version_does_not_retrieve_or_decide(self) -> None:
+        self._write_case()
+        request = replace(_request(), firmware_version=1)  # type: ignore[arg-type]
+        result, tool, core, capture, decide = self._execute(request)
+        self._assert_counts(tool, core, capture, decide, tool_count=0, core_count=0, capture_count=0, decide_count=0)
+        self._assert_failure(result, ERROR_INVALID_REQUEST, decide=decide)
+        self.assertIs(result.request, request)
+        self.assertIsNone(result.packet)
+        self.assertIsNone(result.decision)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error and result.error.message, "firmware_version 必须是字符串或 None。")
+
     def test_non_request_does_not_capture(self) -> None:
         result, tool, core, capture, decide = self._execute({"query": QUERY})
         self._assert_counts(tool, core, capture, decide, tool_count=0, core_count=0, capture_count=0, decide_count=0)

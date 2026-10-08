@@ -81,6 +81,8 @@ def run_runtime(
         return _failure(None, ERROR_INVALID_REQUEST, "runtime request 必须是 RuntimeRequest。")
     if request.request_schema_version != RUNTIME_REQUEST_SCHEMA_VERSION:
         return _failure(request, ERROR_INVALID_REQUEST, "request_schema_version 不受支持。")
+    if request.firmware_version is not None and not isinstance(request.firmware_version, str):
+        return _failure(request, ERROR_INVALID_REQUEST, "firmware_version 必须是字符串或 None。")
 
     try:
         packet = _capture(connection, request, retrieval_deadline_s)
