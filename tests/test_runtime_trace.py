@@ -462,16 +462,17 @@ class TraceBehaviorTests(unittest.TestCase):
         for secret in (serial, ticket, short_ticket, mixed):
             self.assertNotIn(secret, stored)
         payload = json.loads(row["input_json"])
-        for field in ("product_series", "document_type", "status", "association"):
+        for field in ("product_series", "document_type", "status", "association", "product_id"):
             self.assertTrue(str(payload[field]).startswith("redacted:"), payload[field])
-        self.assertEqual(payload["product_id"], product_id)
+        self.assertNotEqual(payload["product_id"], product_id)
         trusted, trusted_row, *_rest = self._run(
             _request(product_id=product_id, status="effective", association="linked")
         )
         trusted_payload = json.loads(trusted_row["input_json"])
         self.assertEqual(trusted_payload["status"], "effective")
         self.assertEqual(trusted_payload["association"], "linked")
-        self.assertEqual(trusted_payload["product_id"], product_id)
+        self.assertTrue(str(trusted_payload["product_id"]).startswith("redacted:"))
+        self.assertNotEqual(trusted_payload["product_id"], product_id)
         self.assertEqual(trusted_payload["product_series"], "")
         self.assertEqual(trusted_payload["document_type"], "")
         packet = trusted.runtime.packet
@@ -481,6 +482,57 @@ class TraceBehaviorTests(unittest.TestCase):
             json.loads(trusted_row["evidence_ids"]),
             [item.evidence_id for item in packet.evidence],
         )
+
+    def test_unverified_numeric_product_id_is_not_stored_raw(self) -> None:
+        real_id = str(self._write_case())
+        phone_like = "13800138000"
+        leaked = _request(product_id=phone_like)
+        with connect_database(self.database) as connection:
+            execution = execute_traced_runtime(connection, leaked)
+            row = connection.execute("SELECT * FROM runtime_traces").fetchone()
+        self.assertTrue(execution.trace_ok, execution.error)
+        self.assertIsNone(execution.error)
+        runtime_request = execution.runtime.request
+        assert isinstance(runtime_request, RuntimeRequest)
+        self.assertEqual(runtime_request.product_id, phone_like)
+        assert execution.runtime.decision is not None
+        self.assertEqual(execution.runtime.decision.decision_type, "abstain")
+        self.assertIsNone(execution.runtime.error)
+        assert row is not None
+        self.assertEqual(row["termination_reason"], "abstain")
+        self.assertNotIn(phone_like, _stored(row))
+        leaked_payload = json.loads(row["input_json"])
+        self.assertTrue(str(leaked_payload["product_id"]).startswith("redacted:"))
+        self.assertNotIn(phone_like, leaked_payload["product_id"])
+
+        real_request = _request(product_id=real_id)
+        with connect_database(self.database) as connection:
+            direct = run_runtime(connection, real_request)
+            traced = execute_traced_runtime(connection, real_request)
+            traced_row = connection.execute(
+                "SELECT * FROM runtime_traces WHERE run_id = ?",
+                (traced.run_id,),
+            ).fetchone()
+        self.assertTrue(direct.ok)
+        self.assertTrue(traced.trace_ok, traced.error)
+        self.assertIsNone(traced.error)
+        assert traced.runtime.decision is not None and direct.decision is not None
+        self.assertEqual(traced.runtime.request.product_id, real_id)
+        self.assertEqual(traced.runtime.decision.decision_type, direct.decision.decision_type)
+        self.assertEqual(traced.runtime.decision.decision_type, "supported")
+        self.assertEqual(
+            list(traced.runtime.decision.evidence_ids),
+            list(direct.decision.evidence_ids),
+        )
+        assert traced_row is not None
+        self.assertEqual(
+            json.loads(traced_row["evidence_ids"]),
+            list(direct.decision.evidence_ids),
+        )
+        self.assertTrue(str(direct.decision.evidence_ids[0]).startswith("ev1-"))
+        traced_payload = json.loads(traced_row["input_json"])
+        self.assertTrue(str(traced_payload["product_id"]).startswith("redacted:"))
+        self.assertNotEqual(traced_payload["product_id"], real_id)
 
     def test_unsafe_payload_is_not_inserted(self) -> None:
         self._write_case()

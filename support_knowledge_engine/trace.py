@@ -359,10 +359,8 @@ def _class_c_filter(value: object, *, field: str) -> str:
         _refuse()
     if value == "":
         return value
-    if _contains_sensitive_pattern(value):
+    if field == "product_id" or _contains_sensitive_pattern(value):
         return class_c_query_text(value)
-    if field == "product_id" and value.isdigit():
-        return value
     if field == "status" and value in _TRUSTED_STATUS:
         return value
     if field == "association" and value in _TRUSTED_ASSOCIATION:
