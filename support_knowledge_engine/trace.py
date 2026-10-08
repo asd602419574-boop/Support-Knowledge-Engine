@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import NoReturn
 
 from .evidence import EvidencePacket, EvidenceSnapshot
+from .governance import DOCUMENT_STATUS_LABELS
 from .runtime import RuntimeRequest, RuntimeResult, run_runtime
 from .search_telemetry import class_c_query_text
 
@@ -25,8 +26,12 @@ TRACE_SCHEMA_VERSION = "1"
 STEP_ID = "1"
 REDACTION_REFUSAL = "redaction_refusal"
 TRACE_WRITE_FAILURE = "trace_write_failure"
+TRACE_NOT_DURABLE = "trace_not_durable"
 REDACTION_REFUSAL_MESSAGE = "runtime trace 拒绝写入未脱敏内容。"
 TRACE_WRITE_FAILURE_MESSAGE = "runtime trace 写入失败。"
+TRACE_NOT_DURABLE_MESSAGE = "runtime trace 不能在调用者未提交的事务中保证持久化。"
+_TRUSTED_STATUS = frozenset(DOCUMENT_STATUS_LABELS)
+_TRUSTED_ASSOCIATION = frozenset({"linked", "unlinked"})
 
 _DECISIONS = frozenset({"supported", "abstain", "conflict"})
 _FAILURES = frozenset(
@@ -268,13 +273,18 @@ def project_class_c_record(
 
 
 def commit_class_c_trace(connection: sqlite3.Connection, record: TraceRecord) -> str:
-    """Insert one already-projected record. Refuse when redaction is not proven."""
+    """Insert one projected record and commit that insert.
+
+    A caller-owned transaction is refused before INSERT. This function does
+    not commit the caller's transaction.
+    """
 
     _assert_record_shape(record)
     columns = _json_columns(record)
     if _contains_sensitive_pattern(_stored_text(record, columns)):
         _refuse()
-    owns = not connection.in_transaction
+    if connection.in_transaction:
+        raise TracePersistenceError(TRACE_NOT_DURABLE, TRACE_NOT_DURABLE_MESSAGE)
     try:
         connection.execute(
             _INSERT,
@@ -298,11 +308,9 @@ def commit_class_c_trace(connection: sqlite3.Connection, record: TraceRecord) ->
                 record.trace_schema_version,
             ),
         )
-        if owns:
-            connection.commit()
+        connection.commit()
     except sqlite3.Error:
-        if owns:
-            connection.rollback()
+        connection.rollback()
         raise
     return record.run_id
 
@@ -329,11 +337,11 @@ def _input_payload(request: object) -> dict[str, object]:
     return {
         "request_schema_version": request.request_schema_version,
         "query": _class_c_query(request.query),
-        "product_id": _class_c_filter(request.product_id),
-        "product_series": _class_c_filter(request.product_series),
-        "document_type": _class_c_filter(request.document_type),
-        "status": _class_c_filter(request.status),
-        "association": _class_c_filter(request.association),
+        "product_id": _class_c_filter(request.product_id, field="product_id"),
+        "product_series": _class_c_filter(request.product_series, field="product_series"),
+        "document_type": _class_c_filter(request.document_type, field="document_type"),
+        "status": _class_c_filter(request.status, field="status"),
+        "association": _class_c_filter(request.association, field="association"),
         "firmware_version": stored_firmware,
     }
 
@@ -344,14 +352,22 @@ def _class_c_query(value: object) -> str:
     return class_c_query_text(value)
 
 
-def _class_c_filter(value: object) -> str:
+def _class_c_filter(value: object, *, field: str) -> str:
+    """Store only an explicit allowlist. Free text is always a class-C marker."""
+
     if not isinstance(value, str):
         _refuse()
-    if _contains_sensitive_pattern(value) or not (
-        value == "" or _ENUM.fullmatch(value) or _VERSION.fullmatch(value)
-    ):
+    if value == "":
+        return value
+    if _contains_sensitive_pattern(value):
         return class_c_query_text(value)
-    return value
+    if field == "product_id" and value.isdigit():
+        return value
+    if field == "status" and value in _TRUSTED_STATUS:
+        return value
+    if field == "association" and value in _TRUSTED_ASSOCIATION:
+        return value
+    return class_c_query_text(value)
 
 
 def _evidence_summary(item: EvidenceSnapshot) -> dict[str, object]:

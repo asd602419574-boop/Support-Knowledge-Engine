@@ -41,6 +41,8 @@ from support_knowledge_engine.runtime import (
 from support_knowledge_engine.trace import (
     REDACTION_REFUSAL,
     REDACTION_REFUSAL_MESSAGE,
+    TRACE_NOT_DURABLE,
+    TRACE_NOT_DURABLE_MESSAGE,
     TRACE_WRITE_FAILURE,
     TRACE_WRITE_FAILURE_MESSAGE,
     TracePersistenceError,
@@ -389,6 +391,97 @@ class TraceBehaviorTests(unittest.TestCase):
         self.assertNotEqual(execution.runtime.decision.decision_type, "abstain")
         self.assertEqual(count, 0)
 
+    def test_caller_transaction_is_not_reported_as_durable(self) -> None:
+        self._write_case()
+        with connect_database(self.database) as connection:
+            connection.execute("BEGIN")
+            execution = execute_traced_runtime(connection, _request())
+            self.assertTrue(connection.in_transaction)
+            self.assertFalse(execution.trace_ok)
+            self.assertIsNone(execution.run_id)
+            assert execution.error is not None
+            self.assertEqual(execution.error.type, TRACE_NOT_DURABLE)
+            self.assertEqual(execution.error.message, TRACE_NOT_DURABLE_MESSAGE)
+            self.assertTrue(execution.runtime.ok)
+            assert execution.runtime.decision is not None
+            self.assertEqual(execution.runtime.decision.decision_type, "supported")
+            self.assertNotEqual(execution.runtime.decision.decision_type, "abstain")
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM runtime_traces").fetchone()[0],
+                0,
+            )
+            connection.rollback()
+            self.assertFalse(connection.in_transaction)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM runtime_traces").fetchone()[0],
+                0,
+            )
+        with connect_database(self.database) as connection:
+            connection.execute("BEGIN")
+            execution = execute_traced_runtime(connection, _request())
+            self.assertFalse(execution.trace_ok)
+            self.assertIsNone(execution.run_id)
+            connection.commit()
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM runtime_traces").fetchone()[0],
+                0,
+            )
+        execution, row, *_rest = self._run(_request())
+        self.assertTrue(execution.trace_ok)
+        self.assertEqual(row["run_id"], execution.run_id)
+
+    def test_unverified_free_input_is_not_stored_raw(self) -> None:
+        product_id = str(self._write_case())
+        serial = "9F3K2LQ8"
+        ticket = "WO-9912"
+        short_ticket = "T12345"
+        mixed = "A1B2C3D4"
+        request = _request(
+            product_id=product_id,
+            product_series=serial,
+            document_type=short_ticket,
+            status=mixed,
+            association=ticket,
+        )
+        with connect_database(self.database) as connection:
+            execution = execute_traced_runtime(connection, request)
+            row = connection.execute("SELECT * FROM runtime_traces").fetchone()
+        self.assertTrue(execution.trace_ok, execution.error)
+        runtime_request = execution.runtime.request
+        assert isinstance(runtime_request, RuntimeRequest)
+        self.assertEqual(runtime_request.product_series, serial)
+        self.assertEqual(runtime_request.document_type, short_ticket)
+        self.assertEqual(runtime_request.status, mixed)
+        self.assertEqual(runtime_request.association, ticket)
+        self.assertEqual(runtime_request.product_id, product_id)
+        assert execution.runtime.error is not None
+        self.assertEqual(execution.runtime.error.type, "invalid_request")
+        self.assertIsNone(execution.runtime.decision)
+        assert row is not None
+        stored = _stored(row)
+        for secret in (serial, ticket, short_ticket, mixed):
+            self.assertNotIn(secret, stored)
+        payload = json.loads(row["input_json"])
+        for field in ("product_series", "document_type", "status", "association"):
+            self.assertTrue(str(payload[field]).startswith("redacted:"), payload[field])
+        self.assertEqual(payload["product_id"], product_id)
+        trusted, trusted_row, *_rest = self._run(
+            _request(product_id=product_id, status="effective", association="linked")
+        )
+        trusted_payload = json.loads(trusted_row["input_json"])
+        self.assertEqual(trusted_payload["status"], "effective")
+        self.assertEqual(trusted_payload["association"], "linked")
+        self.assertEqual(trusted_payload["product_id"], product_id)
+        self.assertEqual(trusted_payload["product_series"], "")
+        self.assertEqual(trusted_payload["document_type"], "")
+        packet = trusted.runtime.packet
+        assert packet is not None and packet.evidence
+        self.assertTrue(packet.evidence[0].evidence_id.startswith("ev1-"))
+        self.assertEqual(
+            json.loads(trusted_row["evidence_ids"]),
+            [item.evidence_id for item in packet.evidence],
+        )
+
     def test_unsafe_payload_is_not_inserted(self) -> None:
         self._write_case()
         with connect_database(self.database) as connection:
@@ -717,6 +810,70 @@ class TraceMigrationTests(unittest.TestCase):
                         (run_id,),
                     ).fetchone()
                 )
+        self.assertEqual(versions, [1, 2, 3])
+        self.assertEqual(document["filename"], "pre-g5-durable.pdf")
+        self.assertEqual(document["sha256"], "c" * 64)
+
+    def test_public_backup_precedes_migration_004(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "deploy.db"
+            _migrate_through(database, 3)
+            _seed_durable_document(database)
+            default_target = root / "default-upgrades.db"
+            _sqlite_backup(database, default_target)
+            upgraded, upgraded_details = create_backup(default_target, root / "default-backup")
+            self.assertEqual(upgraded_details["schema_version"], 4)
+            self.assertEqual(verify_backup(upgraded)["schema_version"], 4)
+            with connect_database(default_target) as connection:
+                self.assertEqual(current_schema_version(connection), 4)
+
+            pre_backup, pre_details = create_backup(database, root / "before-004", migrate=False)
+            self.assertEqual(pre_details["schema_version"], 3)
+            self.assertEqual(pre_details["integrity"], "ok")
+            verified = verify_backup(pre_backup)
+            self.assertEqual(verified["schema_version"], 3)
+            self.assertTrue(verified["manifest_verified"])
+            with connect_database(database) as connection:
+                self.assertEqual(current_schema_version(connection), 3)
+                self.assertIsNone(
+                    connection.execute(
+                        """SELECT 1 FROM sqlite_master
+                           WHERE type = 'table' AND name = 'runtime_traces'"""
+                    ).fetchone()
+                )
+
+            init_database(database)
+            with connect_database(database) as connection:
+                self.assertEqual(current_schema_version(connection), 4)
+                execution = execute_traced_runtime(connection, {"query": QUERY})
+                self.assertTrue(execution.trace_ok)
+                self.assertIsNotNone(execution.run_id)
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM runtime_traces").fetchone()[0],
+                    1,
+                )
+
+            restored = restore_backup(pre_backup, database, confirm=True)
+            self.assertEqual(restored["schema_version"], 3)
+            with connect_database(database) as connection:
+                self.assertEqual(current_schema_version(connection), 3)
+                self.assertIsNone(
+                    connection.execute(
+                        """SELECT 1 FROM sqlite_master
+                           WHERE type = 'table' AND name = 'runtime_traces'"""
+                    ).fetchone()
+                )
+                versions = [
+                    row["version"]
+                    for row in connection.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    )
+                ]
+                document = connection.execute(
+                    "SELECT filename, sha256 FROM documents"
+                ).fetchone()
+            self.assertEqual(verify_backup(pre_backup)["schema_version"], 3)
         self.assertEqual(versions, [1, 2, 3])
         self.assertEqual(document["filename"], "pre-g5-durable.pdf")
         self.assertEqual(document["sha256"], "c" * 64)
