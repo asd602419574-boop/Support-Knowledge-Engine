@@ -158,12 +158,15 @@ def create_case(
     reasons = _reason_codes(decision)
     if decision.decision_type not in _DECISIONS:
         _invalid()
+    _require_supported_evidence(decision.decision_type, evidence)
     if decision.retrieval_state not in _RETRIEVAL_STATES:
         _invalid()
     if decision.packet_schema_version != PACKET_SCHEMA_VERSION:
         _invalid()
     if run_id is not None and (not isinstance(run_id, str) or _RUN_ID.fullmatch(run_id) is None):
         _invalid()
+    if run_id is not None:
+        _require_trace_link(connection, run_id, stored_case_id)
     context_json = _context_json(note)
     created_at = _now()
     try:
@@ -291,6 +294,9 @@ def read_case(connection: sqlite3.Connection, case_id: str) -> CaseRecord:
         context = _parse_context(row["context_json"], row["context_schema_version"])
         reasons = _parse_reasons(row["reason_codes_json"])
         evidence = tuple(_row_evidence(item) for item in evidence_rows)
+        _require_supported_evidence(str(row["decision_type"]), evidence)
+        for link in links:
+            _require_trace_link(connection, str(link["run_id"]), case_id)
     except CaseStoreError:
         _invalid()
     return CaseRecord(
@@ -539,6 +545,29 @@ def _optional_product_id(value: object) -> int | None:
     if value is None:
         return None
     return _positive_int(value)
+
+
+def _require_supported_evidence(
+    decision_type: str,
+    evidence: tuple[CaseEvidence, ...],
+) -> None:
+    # Only supported must cite evidence. Leave abstain and conflict unchanged.
+    if decision_type == DECISION_SUPPORTED and not evidence:
+        _invalid()
+
+
+def _require_trace_link(
+    connection: sqlite3.Connection,
+    run_id: str,
+    case_id: str,
+) -> None:
+    # A null trace case_id may be linked. Do not rewrite the append-only trace.
+    row = connection.execute(
+        "SELECT case_id FROM runtime_traces WHERE run_id = ?",
+        (run_id,),
+    ).fetchone()
+    if row is None or (row["case_id"] is not None and row["case_id"] != case_id):
+        _invalid()
 
 
 def _require_durable(connection: sqlite3.Connection) -> None:

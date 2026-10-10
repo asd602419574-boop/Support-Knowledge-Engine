@@ -31,6 +31,9 @@ from support_knowledge_engine.cases import (
 from support_knowledge_engine.cases import _RETRIEVAL_STATES
 from support_knowledge_engine.db import connect_database, init_database
 from support_knowledge_engine.evidence import (
+    DECISION_ABSTAIN,
+    DECISION_CONFLICT,
+    DECISION_SUPPORTED,
     PACKET_SCHEMA_VERSION,
     SNAPSHOT_SCHEMA_VERSION,
     EvidenceDecision,
@@ -535,10 +538,360 @@ class CaseBehaviorTests(unittest.TestCase):
         self.assertEqual(documents, 1)
         self.assertEqual(cases, 0)
 
-    def _write_case(self, content: str = ORIGINAL_PAGE) -> None:
+    def test_supported_decision_with_empty_evidence_ids_leaves_no_residue(self) -> None:
+        execution = self._supported_execution()
+        packet = execution.runtime.packet
+        decision = execution.runtime.decision
+        assert packet is not None and decision is not None
+        emptied = replace(decision, evidence_ids=())
+        self.assertEqual(emptied.decision_type, DECISION_SUPPORTED)
+        self.assertEqual(emptied.evidence_ids, ())
+        before_trace = _trace_row(self.database, execution.run_id)
+        with connect_database(self.database) as connection:
+            with self.assertRaises(CaseStoreError) as caught:
+                create_case(connection, packet, emptied, run_id=execution.run_id)
+            self.assertEqual(caught.exception.error_type, CASE_INVALID)
+            self.assertEqual(str(caught.exception), CASE_INVALID_MESSAGE)
+            self.assertNotIn(execution.run_id, str(caught.exception))
+            self.assertEqual(_counts(connection), (0, 0, 0))
+        self.assertEqual(_stored_counts(self.database), (0, 0, 0))
+        self.assertEqual(_trace_row(self.database, execution.run_id), before_trace)
+
+    def test_historical_supported_case_without_evidence_fails_closed(self) -> None:
+        supported_id = allocate_case_id()
+        abstain_id = allocate_case_id()
+        _insert_historical_case(self.database, supported_id, DECISION_SUPPORTED)
+        _insert_historical_case(self.database, abstain_id, DECISION_ABSTAIN)
+        abstained = _reopen_case(self.database, abstain_id)
+        self.assertEqual(abstained.decision_type, DECISION_ABSTAIN)
+        self.assertEqual(abstained.evidence, ())
+        with self.assertRaises(CaseStoreError) as caught:
+            _reopen_case(self.database, supported_id)
+        self.assertEqual(caught.exception.error_type, CASE_INVALID)
+        self.assertEqual(str(caught.exception), CASE_INVALID_MESSAGE)
+        self.assertNotIn(supported_id, str(caught.exception))
+        connection = sqlite3.connect(self.database)
+        connection.row_factory = sqlite3.Row
+        try:
+            decision_type = connection.execute(
+                "SELECT decision_type FROM support_cases WHERE case_id = ?",
+                (supported_id,),
+            ).fetchone()["decision_type"]
+            evidence = connection.execute(
+                "SELECT COUNT(*) FROM case_evidence WHERE case_id = ?",
+                (supported_id,),
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(decision_type, DECISION_SUPPORTED)
+        self.assertEqual(evidence, 0)
+
+    def test_supported_case_with_evidence_recovers_across_connections(self) -> None:
+        execution = self._supported_execution()
+        packet = execution.runtime.packet
+        decision = execution.runtime.decision
+        assert packet is not None and decision is not None
+        with connect_database(self.database) as connection:
+            created = create_case(connection, packet, decision)
+        self.assertEqual(created.decision_type, DECISION_SUPPORTED)
+        self.assertEqual(
+            tuple(item.evidence_id for item in created.evidence),
+            decision.evidence_ids,
+        )
+        reopened = _reopen_case(self.database, created.case_id)
+        self.assertEqual(reopened.decision_type, DECISION_SUPPORTED)
+        self.assertEqual(reopened.evidence[0].evidence_id, decision.evidence_ids[0])
+        self.assertEqual(
+            reopened.evidence[0].supporting_original_text,
+            packet.evidence[0].supporting_original_text,
+        )
+        self.assertTrue(snapshot_integrity_ok(_as_snapshot(reopened.evidence[0])))
+
+    def test_abstain_and_conflict_keep_existing_evidence_semantics(self) -> None:
+        with connect_database(self.database) as connection:
+            product_id = _product(connection, "AeroCam Mini 2", "ACM2")
+            _document(
+                connection,
+                product_id,
+                "handbook.pdf",
+                ORIGINAL_PAGE,
+                firmware_range="1.2.3",
+            )
+            cited = execute_traced_runtime(
+                connection,
+                _request(firmware_version="1.2.3"),
+            )
+            empty = execute_traced_runtime(connection, _request("quantum toaster zz-999"))
+        cited_packet = cited.runtime.packet
+        cited_decision = cited.runtime.decision
+        empty_packet = empty.runtime.packet
+        empty_decision = empty.runtime.decision
+        assert cited_packet is not None and cited_decision is not None
+        assert empty_packet is not None and empty_decision is not None
+        self.assertEqual(cited_decision.decision_type, DECISION_ABSTAIN)
+        self.assertGreater(len(cited_decision.evidence_ids), 0)
+        self.assertEqual(empty_decision.decision_type, DECISION_ABSTAIN)
+        self.assertEqual(empty_decision.evidence_ids, ())
+        with connect_database(self.database) as connection:
+            stored_cited = create_case(connection, cited_packet, cited_decision)
+            stored_empty = create_case(connection, empty_packet, empty_decision)
+        self.assertEqual(stored_cited.decision_type, DECISION_ABSTAIN)
+        self.assertEqual(
+            tuple(item.evidence_id for item in stored_cited.evidence),
+            cited_decision.evidence_ids,
+        )
+        self.assertEqual(stored_empty.decision_type, DECISION_ABSTAIN)
+        self.assertEqual(stored_empty.evidence, ())
+        self.assertEqual(
+            tuple(item.evidence_id for item in _reopen_case(self.database, stored_cited.case_id).evidence),
+            cited_decision.evidence_ids,
+        )
+        self.assertEqual(_reopen_case(self.database, stored_empty.case_id).evidence, ())
+
+        with connect_database(self.database) as connection:
+            _document(
+                connection,
+                product_id,
+                "old.pdf",
+                ORIGINAL_PAGE,
+                status="superseded",
+            )
+            conflict_run = execute_traced_runtime(connection, _request())
+        conflict_packet = conflict_run.runtime.packet
+        conflict_decision = conflict_run.runtime.decision
+        assert conflict_packet is not None and conflict_decision is not None
+        self.assertEqual(conflict_decision.decision_type, DECISION_CONFLICT)
+        self.assertGreater(len(conflict_decision.evidence_ids), 0)
+        emptied = replace(conflict_decision, evidence_ids=())
+        with connect_database(self.database) as connection:
+            stored_conflict = create_case(connection, conflict_packet, conflict_decision)
+            stored_emptied = create_case(connection, conflict_packet, emptied)
+        self.assertEqual(stored_conflict.decision_type, DECISION_CONFLICT)
+        self.assertEqual(
+            tuple(item.evidence_id for item in stored_conflict.evidence),
+            conflict_decision.evidence_ids,
+        )
+        self.assertEqual(stored_emptied.decision_type, DECISION_CONFLICT)
+        self.assertEqual(stored_emptied.evidence, ())
+        reopened_conflict = _reopen_case(self.database, stored_conflict.case_id)
+        reopened_emptied = _reopen_case(self.database, stored_emptied.case_id)
+        self.assertEqual(reopened_conflict.decision_type, DECISION_CONFLICT)
+        self.assertEqual(
+            tuple(item.evidence_id for item in reopened_conflict.evidence),
+            conflict_decision.evidence_ids,
+        )
+        self.assertEqual(reopened_emptied.decision_type, DECISION_CONFLICT)
+        self.assertEqual(reopened_emptied.evidence, ())
+
+    def test_missing_trace_run_id_rejects_case_creation(self) -> None:
+        packet, decision = _packet()
+        missing = "ab" * 16
+        with connect_database(self.database) as connection:
+            with self.assertRaises(CaseStoreError) as caught:
+                create_case(connection, packet, decision, run_id=missing)
+            self.assertEqual(caught.exception.error_type, CASE_INVALID)
+            self.assertEqual(str(caught.exception), CASE_INVALID_MESSAGE)
+            self.assertNotIn(missing, str(caught.exception))
+            self.assertEqual(_counts(connection), (0, 0, 0))
+        self.assertEqual(_stored_counts(self.database), (0, 0, 0))
+
+    def test_trace_owned_by_another_case_rejects_the_link(self) -> None:
+        case_a = allocate_case_id()
+        case_b = allocate_case_id()
+        execution = self._supported_execution(case_a)
+        packet = execution.runtime.packet
+        decision = execution.runtime.decision
+        assert packet is not None and decision is not None
+        before_trace = _trace_row(self.database, execution.run_id)
+        with connect_database(self.database) as connection:
+            with self.assertRaises(CaseStoreError) as caught:
+                create_case(
+                    connection,
+                    packet,
+                    decision,
+                    case_id=case_b,
+                    run_id=execution.run_id,
+                )
+            self.assertEqual(caught.exception.error_type, CASE_INVALID)
+            self.assertEqual(str(caught.exception), CASE_INVALID_MESSAGE)
+            self.assertNotIn(case_b, str(caught.exception))
+            self.assertNotIn(execution.run_id, str(caught.exception))
+            self.assertEqual(_counts(connection), (0, 0, 0))
+        self.assertEqual(_stored_counts(self.database), (0, 0, 0))
+        self.assertEqual(_trace_row(self.database, execution.run_id), before_trace)
+        self.assertEqual(before_trace[_trace_case_index(self.database)], case_a)
+
+    def test_trace_owned_by_the_same_case_can_be_linked(self) -> None:
+        case_a = allocate_case_id()
+        execution = self._supported_execution(case_a)
+        packet = execution.runtime.packet
+        decision = execution.runtime.decision
+        assert packet is not None and decision is not None
+        before_trace = _trace_row(self.database, execution.run_id)
+        with connect_database(self.database) as connection:
+            created = create_case(
+                connection,
+                packet,
+                decision,
+                case_id=case_a,
+                run_id=execution.run_id,
+            )
+        self.assertEqual(created.case_id, case_a)
+        self.assertEqual(created.decision_type, DECISION_SUPPORTED)
+        self.assertEqual(created.trace_run_ids, (execution.run_id,))
+        self.assertEqual(
+            tuple(item.evidence_id for item in created.evidence),
+            decision.evidence_ids,
+        )
+        reopened = _reopen_case(self.database, case_a)
+        self.assertEqual(reopened.trace_run_ids, (execution.run_id,))
+        self.assertEqual(reopened.decision_type, DECISION_SUPPORTED)
+        self.assertEqual(_trace_row(self.database, execution.run_id), before_trace)
+
+    def test_null_trace_case_id_link_keeps_the_trace_unchanged(self) -> None:
+        execution = self._supported_execution()
+        packet = execution.runtime.packet
+        decision = execution.runtime.decision
+        assert packet is not None and decision is not None
+        before_trace = _trace_row(self.database, execution.run_id)
+        self.assertIsNone(before_trace[_trace_case_index(self.database)])
+        with connect_database(self.database) as connection:
+            created = create_case(connection, packet, decision, run_id=execution.run_id)
+        self.assertEqual(created.trace_run_ids, (execution.run_id,))
+        self.assertEqual(created.decision_type, DECISION_SUPPORTED)
+        reopened = _reopen_case(self.database, created.case_id)
+        self.assertEqual(reopened.trace_run_ids, (execution.run_id,))
+        after_trace = _trace_row(self.database, execution.run_id)
+        self.assertEqual(after_trace, before_trace)
+        self.assertIsNone(after_trace[_trace_case_index(self.database)])
+
+    def test_injected_invalid_trace_link_fails_closed_on_read(self) -> None:
+        execution = self._supported_execution()
+        packet = execution.runtime.packet
+        decision = execution.runtime.decision
+        assert packet is not None and decision is not None
+        with connect_database(self.database) as connection:
+            created = create_case(connection, packet, decision, run_id=execution.run_id)
+        self.assertEqual(_reopen_case(self.database, created.case_id).trace_run_ids, (execution.run_id,))
+        missing = "cd" * 16
+        before_trace = _trace_row(self.database, execution.run_id)
+        _insert_link(self.database, created.case_id, missing)
+        with self.assertRaises(CaseStoreError) as caught:
+            _reopen_case(self.database, created.case_id)
+        self.assertEqual(caught.exception.error_type, CASE_INVALID)
+        self.assertEqual(str(caught.exception), CASE_INVALID_MESSAGE)
+        self.assertNotIn(missing, str(caught.exception))
+        self.assertEqual(_trace_row(self.database, execution.run_id), before_trace)
+
+        case_a = allocate_case_id()
+        case_b = allocate_case_id()
+        with connect_database(self.database) as connection:
+            product_id = connection.execute("SELECT id FROM products ORDER BY id").fetchone()[0]
+            owned = execute_traced_runtime(
+                connection,
+                _request(
+                    product_id=str(product_id),
+                    product_series="AeroCam",
+                    document_type="Service Handbook",
+                    status="effective",
+                    association="linked",
+                    firmware_version="1.2.3",
+                ),
+                case_id=case_a,
+            )
+        self.assertTrue(owned.trace_ok, owned.error)
+        owned_packet = owned.runtime.packet
+        owned_decision = owned.runtime.decision
+        assert owned_packet is not None and owned_decision is not None
+        self.assertEqual(owned_decision.decision_type, DECISION_SUPPORTED)
+        with connect_database(self.database) as connection:
+            other = create_case(connection, owned_packet, owned_decision, case_id=case_b)
+        self.assertEqual(other.trace_run_ids, ())
+        owned_before = _trace_row(self.database, owned.run_id)
+        _insert_link(self.database, case_b, owned.run_id)
+        with self.assertRaises(CaseStoreError) as mismatched:
+            _reopen_case(self.database, case_b)
+        self.assertEqual(mismatched.exception.error_type, CASE_INVALID)
+        self.assertEqual(str(mismatched.exception), CASE_INVALID_MESSAGE)
+        self.assertNotIn(owned.run_id, str(mismatched.exception))
+        self.assertEqual(_trace_row(self.database, owned.run_id), owned_before)
+        connection = sqlite3.connect(self.database)
+        connection.row_factory = sqlite3.Row
+        try:
+            links = connection.execute(
+                "SELECT run_id FROM case_trace_links WHERE case_id = ? ORDER BY id",
+                (case_b,),
+            ).fetchall()
+            decision_type = connection.execute(
+                "SELECT decision_type FROM support_cases WHERE case_id = ?",
+                (case_b,),
+            ).fetchone()["decision_type"]
+        finally:
+            connection.close()
+        self.assertEqual([row["run_id"] for row in links], [owned.run_id])
+        self.assertEqual(decision_type, DECISION_SUPPORTED)
+
+    def test_forced_link_insert_failure_rolls_back_and_keeps_the_trace(self) -> None:
+        execution = self._supported_execution()
+        packet = execution.runtime.packet
+        decision = execution.runtime.decision
+        assert packet is not None and decision is not None
+        self.assertGreater(len(decision.evidence_ids), 0)
+        before_trace = _trace_row(self.database, execution.run_id)
+        with connect_database(self.database) as connection:
+            connection.execute(
+                """CREATE TEMP TRIGGER force_link_failure
+                   BEFORE INSERT ON case_trace_links
+                   BEGIN
+                       SELECT RAISE(ABORT, 'forced link failure');
+                   END"""
+            )
+            self.assertFalse(connection.in_transaction)
+            with self.assertRaises(CaseStoreError) as caught:
+                create_case(connection, packet, decision, run_id=execution.run_id)
+            self.assertEqual(caught.exception.error_type, CASE_INVALID)
+            self.assertEqual(str(caught.exception), CASE_INVALID_MESSAGE)
+            self.assertNotIn("forced link failure", str(caught.exception))
+            self.assertNotIn(execution.run_id, str(caught.exception))
+            self.assertEqual(_counts(connection), (0, 0, 0))
+            current = connection.execute(
+                "SELECT * FROM runtime_traces WHERE run_id = ?",
+                (execution.run_id,),
+            ).fetchone()
+            self.assertEqual(tuple(current), before_trace)
+        self.assertEqual(_stored_counts(self.database), (0, 0, 0))
+        self.assertEqual(_trace_row(self.database, execution.run_id), before_trace)
+
+    def _supported_execution(self, case_id: str | None = None):
+        product_id = self._write_case()
+        request = _request(
+            product_id=str(product_id),
+            product_series="AeroCam",
+            document_type="Service Handbook",
+            status="effective",
+            association="linked",
+            firmware_version="1.2.3",
+        )
+        with connect_database(self.database) as connection:
+            execution = execute_traced_runtime(connection, request, case_id=case_id)
+        self.assertTrue(execution.trace_ok, execution.error)
+        self.assertTrue(execution.runtime.ok)
+        packet = execution.runtime.packet
+        decision = execution.runtime.decision
+        assert packet is not None and decision is not None
+        self.assertEqual(decision.decision_type, DECISION_SUPPORTED)
+        self.assertEqual(
+            decision.evidence_ids,
+            tuple(item.evidence_id for item in packet.evidence),
+        )
+        self.assertGreater(len(decision.evidence_ids), 0)
+        return execution
+
+    def _write_case(self, content: str = ORIGINAL_PAGE) -> int:
         with connect_database(self.database) as connection:
             product_id = _product(connection, "AeroCam Mini 2", "ACM2")
             _document(connection, product_id, "handbook.pdf", content)
+            return product_id
 
 
 class CaseMigrationTests(unittest.TestCase):
@@ -866,6 +1219,83 @@ def _as_snapshot(item: object) -> EvidenceSnapshot:
         decision_visible_source=item.decision_visible_source,
         transformation_version=item.transformation_version,
     )
+
+
+def _counts(connection: sqlite3.Connection) -> tuple[int, int, int]:
+    return tuple(
+        connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+        for name in ("support_cases", "case_evidence", "case_trace_links")
+    )
+
+
+def _stored_counts(database: Path) -> tuple[int, int, int]:
+    connection = sqlite3.connect(database)
+    try:
+        return _counts(connection)
+    finally:
+        connection.close()
+
+
+def _trace_case_index(database: Path) -> int:
+    connection = sqlite3.connect(database)
+    try:
+        columns = [
+            row[1] for row in connection.execute("PRAGMA table_info(runtime_traces)")
+        ]
+    finally:
+        connection.close()
+    return columns.index("case_id")
+
+
+def _trace_row(database: Path, run_id: str) -> tuple:
+    connection = sqlite3.connect(database)
+    try:
+        row = connection.execute(
+            "SELECT * FROM runtime_traces WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    assert row is not None
+    return tuple(row)
+
+
+def _insert_historical_case(database: Path, case_id: str, decision_type: str) -> None:
+    context = json.dumps(
+        {"note_marker": None, "schema_version": "1"},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """INSERT INTO support_cases (
+                   case_id, created_at, context_json, context_schema_version,
+                   context_updated_at, decision_type, reason_codes_json,
+                   retrieval_state, packet_schema_version
+               ) VALUES (?, '2026-01-02T00:00:00+00:00', ?, '1',
+                         '2026-01-02T00:00:00+00:00', ?, '[]',
+                         'high_confidence', ?)""",
+            (case_id, context, decision_type, PACKET_SCHEMA_VERSION),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _insert_link(database: Path, case_id: str, run_id: str) -> None:
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """INSERT INTO case_trace_links (case_id, run_id, recorded_at)
+               VALUES (?, ?, '2026-01-03T00:00:00+00:00')""",
+            (case_id, run_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def _reopen_case(database: Path, case_id: str):
