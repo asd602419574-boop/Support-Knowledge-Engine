@@ -84,6 +84,7 @@ _MIGRATION_NAMES = (
     (4, "runtime trace"),
     (5, "case store"),
     (6, "case evidence fidelity"),
+    (7, "support workflow"),
 )
 
 
@@ -872,7 +873,7 @@ class TraceMigrationTests(unittest.TestCase):
                     row["version"]
                     for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")
                 ]
-                self.assertEqual(versions, [1, 2, 3, 4, 5, 6])
+                self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7])
                 _migration_004_runtime_trace(connection)
                 _migration_004_runtime_trace(connection)
                 triggers = [
@@ -954,7 +955,7 @@ class TraceMigrationTests(unittest.TestCase):
 
             init_database(database)
             with connect_database(database) as connection:
-                self.assertEqual(current_schema_version(connection), 6)
+                self.assertEqual(current_schema_version(connection), 7)
                 execution = execute_traced_runtime(connection, {"query": QUERY})
                 self.assertTrue(execution.trace_ok)
                 run_id = execution.run_id
@@ -963,8 +964,8 @@ class TraceMigrationTests(unittest.TestCase):
                     1,
                 )
             migrated, migrated_details = create_backup(database, root / "migrated")
-            self.assertEqual(migrated_details["schema_version"], 6)
-            self.assertEqual(verify_backup(migrated)["schema_version"], 6)
+            self.assertEqual(migrated_details["schema_version"], 7)
+            self.assertEqual(verify_backup(migrated)["schema_version"], 7)
 
             restored = restore_backup(pre_migration, database, confirm=True)
             self.assertEqual(restored["schema_version"], 3)
@@ -1000,10 +1001,10 @@ class TraceMigrationTests(unittest.TestCase):
             default_target = root / "default-upgrades.db"
             _sqlite_backup(database, default_target)
             upgraded, upgraded_details = create_backup(default_target, root / "default-backup")
-            self.assertEqual(upgraded_details["schema_version"], 6)
-            self.assertEqual(verify_backup(upgraded)["schema_version"], 6)
+            self.assertEqual(upgraded_details["schema_version"], 7)
+            self.assertEqual(verify_backup(upgraded)["schema_version"], 7)
             with connect_database(default_target) as connection:
-                self.assertEqual(current_schema_version(connection), 6)
+                self.assertEqual(current_schema_version(connection), 7)
 
             pre_backup, pre_details = create_backup(database, root / "before-004", migrate=False)
             self.assertEqual(pre_details["schema_version"], 3)
@@ -1022,7 +1023,7 @@ class TraceMigrationTests(unittest.TestCase):
 
             init_database(database)
             with connect_database(database) as connection:
-                self.assertEqual(current_schema_version(connection), 6)
+                self.assertEqual(current_schema_version(connection), 7)
                 execution = execute_traced_runtime(connection, {"query": QUERY})
                 self.assertTrue(execution.trace_ok)
                 self.assertIsNotNone(execution.run_id)

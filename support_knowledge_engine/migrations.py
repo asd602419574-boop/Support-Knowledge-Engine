@@ -441,6 +441,83 @@ def _migration_006_case_evidence_fidelity(connection: sqlite3.Connection) -> Non
         _add_column(connection, "case_evidence", definition)
 
 
+# Code revert does not roll the database back. Restoring a backup taken before
+# migration 7 discards workflow events written after that backup.
+MIGRATION_007_DATA_LOSS = (
+    "Restoring a backup taken before migration 7 discards every workflow_events "
+    "row written after that backup. The restored database returns to schema 6 "
+    "and has no support workflow history."
+)
+
+
+def _migration_007_support_workflow(connection: sqlite3.Connection) -> None:
+    # execute keeps this migration inside apply_migrations' transaction.
+    hex32 = "[0-9a-f]" * 32
+    hex64 = "[0-9a-f]" * 64
+    case_id_check = f"length(case_id) = 38 AND case_id GLOB 'case1-{hex32}'"
+    evidence_check = (
+        "evidence_id IS NULL OR "
+        f"(length(evidence_id) = 68 AND evidence_id GLOB 'ev1-{hex64}')"
+    )
+    decision_check = (
+        "decision_reference IS NULL OR "
+        f"(length(decision_reference) = 69 AND decision_reference GLOB 'dec1-{hex64}')"
+    )
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS workflow_events (
+               id INTEGER PRIMARY KEY,
+               case_id TEXT NOT NULL REFERENCES support_cases(case_id) ON DELETE RESTRICT,
+               sequence INTEGER NOT NULL CHECK (sequence >= 1),
+               from_state TEXT NOT NULL,
+               to_state TEXT NOT NULL,
+               evidence_id TEXT,
+               decision_reference TEXT,
+               recorded_at TEXT NOT NULL,
+               event_schema_version TEXT NOT NULL CHECK (event_schema_version = '1'),
+               UNIQUE(case_id, sequence),
+               CHECK ({case_id_check}),
+               CHECK ({evidence_check}),
+               CHECK ({decision_check}),
+               CHECK (
+                   (from_state = 'opened' AND to_state = 'investigating'
+                    AND evidence_id IS NULL AND decision_reference IS NULL)
+                   OR (from_state = 'investigating' AND to_state = 'resolved'
+                       AND evidence_id IS NOT NULL AND decision_reference IS NULL)
+                   OR (from_state = 'investigating' AND to_state = 'abstained'
+                       AND evidence_id IS NULL AND decision_reference IS NOT NULL)
+               )
+           )"""
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workflow_events_case ON workflow_events(case_id, sequence)"
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS workflow_events_no_update
+           BEFORE UPDATE ON workflow_events
+           BEGIN
+               SELECT RAISE(ABORT, 'workflow_events is append-only');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS workflow_events_no_delete
+           BEFORE DELETE ON workflow_events
+           BEGIN
+               SELECT RAISE(ABORT, 'workflow_events is append-only');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS workflow_events_no_replace
+           BEFORE INSERT ON workflow_events
+           WHEN EXISTS (
+               SELECT 1 FROM workflow_events
+               WHERE id = NEW.id OR (case_id = NEW.case_id AND sequence = NEW.sequence)
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'workflow_events is append-only');
+           END"""
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "phase 1 baseline", _migration_001_baseline),
     (2, "knowledge governance and lifecycle", _migration_002_governance),
@@ -448,6 +525,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     (4, "runtime trace", _migration_004_runtime_trace),
     (5, "case store", _migration_005_case_store),
     (6, "case evidence fidelity", _migration_006_case_evidence_fidelity),
+    (7, "support workflow", _migration_007_support_workflow),
 )
 
 

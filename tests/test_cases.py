@@ -931,7 +931,7 @@ class CaseMigrationTests(unittest.TestCase):
 
             init_database(database)
             with connect_database(database) as connection:
-                self.assertEqual(current_schema_version(connection), 6)
+                self.assertEqual(current_schema_version(connection), 7)
                 _migration_005_case_store(connection)
                 _migration_005_case_store(connection)
                 version_rows = connection.execute(
@@ -961,7 +961,7 @@ class CaseMigrationTests(unittest.TestCase):
                 )
             self.assertEqual(version_rows, 1)
             migrated, migrated_details = create_backup(database, root / "migrated")
-            self.assertEqual(migrated_details["schema_version"], 6)
+            self.assertEqual(migrated_details["schema_version"], 7)
 
             restored = restore_backup(pre_backup, database, confirm=True)
             self.assertEqual(restored["schema_version"], 4)
@@ -1057,7 +1057,7 @@ class CaseMigrationTests(unittest.TestCase):
 
             init_database(database)
             with connect_database(database) as connection:
-                self.assertEqual(current_schema_version(connection), 6)
+                self.assertEqual(current_schema_version(connection), 7)
                 _migration_006_case_evidence_fidelity(connection)
                 _migration_006_case_evidence_fidelity(connection)
                 version_rows = connection.execute(
