@@ -397,6 +397,22 @@ def _starter_open(thread: threading.Thread) -> bool:
     return thread.ident is None or thread.is_alive()
 
 
+def _prepare_spawn(target: object, process: object) -> None:
+    """Serialize a provider before CreateProcess. The caller must already be the owned starter.
+
+    A dump that never returns keeps this starter and does not create a worker. The live
+    starter count stays capped. The thread is not a daemon, so the process cannot finish
+    while the dump is still running; process exit is the boundary for that stuck thread.
+    """
+
+    if getattr(target, "__name__", "") != "provider_job":
+        return
+    args = getattr(process, "_args", None)
+    if not isinstance(args, tuple) or not args:
+        return
+    ForkingPickler.dumps(args[0])
+
+
 def _delay_allows_start(
     cancel: threading.Event,
     shutdown: threading.Event,
@@ -622,6 +638,11 @@ class WorkerRegistry:
             try:
                 if not _delay_allows_start(spawn_cancel, self._shutdown, hard, delay):
                     holder["status"] = "not_started"
+                    return
+                try:
+                    _prepare_spawn(target, process)
+                except Exception:
+                    holder["status"] = "start_failed"
                     return
                 with _START_LOCK:
                     if spawn_cancel.is_set() or self._shutdown.is_set() or time.monotonic() >= hard:
@@ -1017,19 +1038,6 @@ def _provider_attempts(
         payload["job_token"] = token
         sentinel = _marker(request, f"provider-{draft.decide_cycles}-{attempt}")
         mode = request.limits.provider_mode
-        if mode not in {"late", "silent"} and not _spawnable(request.provider):
-            draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
-            _append_step(
-                draft,
-                request,
-                attempt,
-                0,
-                started_provider=False,
-                started_tool=False,
-                action=(("type", "start_failed"),),
-                evidence_ids=(),
-            )
-            return _Stop(TERMINATION_PROVIDER)
         draft.provider_starts += 1
         started = time.monotonic()
         if mode == "late":
@@ -1587,16 +1595,6 @@ def _evidence_window(
                 continue
             chosen.append((item, identity, locator))
     return chosen[-8:]
-
-
-def _spawnable(provider: object) -> bool:
-    """Reject a provider before CreateProcess. A failed pickle must not start a child."""
-
-    try:
-        ForkingPickler.dumps(provider)
-    except Exception:
-        return False
-    return True
 
 
 def _apply_provider_progress(provider: object, progress: object) -> None:

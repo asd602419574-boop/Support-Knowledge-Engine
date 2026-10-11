@@ -1698,3 +1698,356 @@ class AgentLifecycleDeadlineTests(unittest.TestCase):
             payload["finalizer_view"]["active"],
             payload["finalizer_view"]["orphans"],
         )
+
+
+class _SlowStateProvider:
+    """The pickle itself waits. Produce must not run."""
+
+    provider_id = "slow-state"
+    model_version = "slow-state-v1"
+
+    def __getstate__(self) -> dict[str, str]:
+        time.sleep(0.8)
+        return {"provider_id": self.provider_id, "model_version": self.model_version}
+
+    def __setstate__(self, state: dict[str, str]) -> None:
+        self.provider_id = state["provider_id"]
+        self.model_version = state["model_version"]
+
+    def produce(self, request: object, clock: object) -> object:
+        del request, clock
+        raise AssertionError("slow provider must not produce")
+
+
+class _RaisingStateProvider:
+    """Pickle fails closed. The exception text must stay out of the result."""
+
+    provider_id = "raising-state"
+    model_version = "raising-state-v1"
+
+    def __getstate__(self) -> dict[str, str]:
+        raise RuntimeError("state refused")
+
+    def produce(self, request: object, clock: object) -> object:
+        del request, clock
+        raise AssertionError("raising provider must not produce")
+
+
+class _BlockedStateProvider:
+    """Pickle never returns. Only process exit can release this starter."""
+
+    provider_id = "blocked-state"
+    model_version = "blocked-state-v1"
+
+    def __getstate__(self) -> dict[str, str]:
+        threading.Event().wait()
+        return {"provider_id": self.provider_id}
+
+    def produce(self, request: object, clock: object) -> object:
+        del request, clock
+        raise AssertionError("blocked provider must not produce")
+
+
+def _open_named(registry: WorkerRegistry, name: str) -> int:
+    return sum(1 for thread in registry._starters if thread.name == name and (thread.ident is None or thread.is_alive()))
+
+
+def _guard_live(target: object, args: tuple[object, ...], limit_s: float) -> dict[str, object]:
+    """Take one queued result, then stop a child whose starter is still inside pickle.
+
+    A non-daemon starter blocked in ``__getstate__`` keeps the child alive after the
+    result is queued. Reading the queue first proves the run returned. Terminating
+    that child is the suite bound and the process-exit bound for the stuck thread.
+    """
+
+    from queue import Empty
+
+    ctx = multiprocessing.get_context("spawn")
+    queue = ctx.Queue()
+    process = ctx.Process(target=target, args=(queue, *args))
+    process.start()
+    payload: object = None
+    try:
+        payload = queue.get(timeout=limit_s)
+    except Empty:
+        payload = None
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(2)
+            if process.is_alive():
+                process.kill()
+                process.join(2)
+        queue.cancel_join_thread()
+        queue.close()
+        process.join(0)
+        if not process.is_alive():
+            process.close()
+    if not isinstance(payload, dict):
+        raise AssertionError("external timeout" if payload is None else repr(payload))
+    if payload.get("error"):
+        raise AssertionError(str(payload["error"]))
+    return payload
+
+
+def _serialization_request(provider: object, marker: Path) -> AgentRequest:
+    return _request(
+        provider,
+        marker,
+        budget=_budget(provider_call_deadline_s=0.1, run_deadline_s=0.1, max_retries=0),
+        limits=_limits(marker, cleanup_timeout_s=0.4),
+    )
+
+
+def _slow_state_case(queue: object, database: str, marker: str) -> None:
+    registry = WorkerRegistry(cleanup_timeout_s=0.4, max_orphans=4, max_active_workers=2)
+    root = Path(marker)
+    try:
+        started = time.monotonic()
+        result = run_agent(database, _serialization_request(_SlowStateProvider(), root), registry=registry)
+        elapsed = time.monotonic() - started
+        time.sleep(1.2)
+        queue.put(  # type: ignore[attr-defined]
+            {
+                "elapsed": elapsed,
+                "reason": result.termination_reason,
+                "ok": result.ok,
+                "deadline": result.deadline_reached,
+                "decision": result.decision is not None,
+                "started": result.provider_calls_started,
+                "tools": result.tool_calls_started,
+                "marker": _started(root, "provider-1-0"),
+                "action": dict(result.trace.steps[0].action_summary)["type"],
+                "resource": result.trace.resource_stop,
+                **_lifecycle_view(registry),
+            }
+        )
+    except Exception as exc:
+        _put_error(queue, exc)
+    finally:
+        registry.force_reap(budget_s=1.0)
+
+
+def _raising_state_case(queue: object, database: str, marker: str) -> None:
+    registry = WorkerRegistry(cleanup_timeout_s=0.4, max_orphans=4, max_active_workers=2)
+    root = Path(marker)
+    try:
+        started = time.monotonic()
+        result = run_agent(database, _serialization_request(_RaisingStateProvider(), root), registry=registry)
+        elapsed = time.monotonic() - started
+        queue.put(  # type: ignore[attr-defined]
+            {
+                "elapsed": elapsed,
+                "reason": result.termination_reason,
+                "ok": result.ok,
+                "decision": result.decision is not None,
+                "started": result.provider_calls_started,
+                "tools": result.tool_calls_started,
+                "marker": _started(root, "provider-1-0"),
+                "action": dict(result.trace.steps[0].action_summary)["type"],
+                "usage": result.trace.usage.state,
+                "message": result.message,
+                "trace": _trace_text(result),
+                **_lifecycle_view(registry),
+            }
+        )
+    except Exception as exc:
+        _put_error(queue, exc)
+    finally:
+        registry.force_reap(budget_s=1.0)
+
+
+def _blocked_state_case(queue: object, database: str, marker: str) -> None:
+    registry = WorkerRegistry(cleanup_timeout_s=0.4, max_orphans=4, max_active_workers=2)
+    root = Path(marker)
+    runs: list[dict[str, object]] = []
+    try:
+        for _index in range(8):
+            started = time.monotonic()
+            result = run_agent(database, _serialization_request(_BlockedStateProvider(), root), registry=registry)
+            runs.append(
+                {
+                    "elapsed": time.monotonic() - started,
+                    "reason": result.termination_reason,
+                    "ok": result.ok,
+                    "deadline": result.deadline_reached,
+                    "decision": result.decision is not None,
+                    "started": result.provider_calls_started,
+                    "resource": result.trace.resource_stop,
+                }
+            )
+        held = _open_named(registry, "g9-spawn")
+        started = time.monotonic()
+        refused = run_agent(database, _serialization_request(_BlockedStateProvider(), root), registry=registry)
+        runs.append(
+            {
+                "elapsed": time.monotonic() - started,
+                "reason": refused.termination_reason,
+                "ok": refused.ok,
+                "deadline": refused.deadline_reached,
+                "decision": refused.decision is not None,
+                "started": refused.provider_calls_started,
+                "resource": refused.trace.resource_stop,
+            }
+        )
+        queue.put(  # type: ignore[attr-defined]
+            {
+                "runs": runs,
+                "held": held,
+                "spawn_threads": _open_named(registry, "g9-spawn"),
+                "marker": _started(root, "provider-1-0"),
+                **_lifecycle_view(registry),
+            }
+        )
+    except Exception as exc:
+        _put_error(queue, exc)
+
+
+def _repeated_serialization_case(queue: object, database: str, marker: str) -> None:
+    registry = WorkerRegistry(cleanup_timeout_s=0.4, max_orphans=4, max_active_workers=2)
+    root = Path(marker)
+    runs: list[dict[str, object]] = []
+    observed = 0
+    try:
+        for _index in range(5):
+            started = time.monotonic()
+            result = run_agent(database, _serialization_request(_SlowStateProvider(), root), registry=registry)
+            observed = max(observed, _open_named(registry, "g9-spawn"))
+            runs.append(
+                {
+                    "elapsed": time.monotonic() - started,
+                    "reason": result.termination_reason,
+                    "ok": result.ok,
+                    "deadline": result.deadline_reached,
+                    "decision": result.decision is not None,
+                    "started": result.provider_calls_started,
+                    "marker": _started(root, "provider-1-0"),
+                    "resource": result.trace.resource_stop,
+                }
+            )
+        time.sleep(1.2)
+        queue.put(  # type: ignore[attr-defined]
+            {"runs": runs, "max_spawn": observed, "marker": _started(root, "provider-1-0"), **_lifecycle_view(registry)}
+        )
+    except Exception as exc:
+        _put_error(queue, exc)
+    finally:
+        registry.force_reap(budget_s=1.0)
+
+
+class AgentSerializationDeadlineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = __import__("tempfile").TemporaryDirectory()
+        self.database = Path(self.temp.name) / "g93.db"
+        self.marker = Path(self.temp.name) / "markers"
+        self.marker.mkdir()
+        init_database(self.database)
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def _quiet(self, children: object, active: object, orphans: object) -> None:
+        self.assertEqual(children, [])
+        self.assertEqual(active, 0)
+        self.assertEqual(orphans, 0)
+
+    def test_slow_getstate_returns_inside_the_run_deadline(self) -> None:
+        payload = _guard(_slow_state_case, (str(self.database), str(self.marker)), 8)
+        print(
+            f"G93 slow elapsed={payload['elapsed']:.3f} view={ {k: payload[k] for k in ('reason', 'ok', 'deadline', 'started', 'marker', 'action', 'active', 'orphans', 'starters', 'children')} }",
+            flush=True,
+        )
+        self.assertEqual(payload["reason"], "timeout")
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["deadline"])
+        self.assertFalse(payload["decision"])
+        self.assertEqual(payload["started"], 0)
+        self.assertEqual(payload["tools"], 0)
+        self.assertFalse(payload["marker"])
+        self.assertEqual(payload["action"], "not_started")
+        self.assertIsNone(payload["resource"])
+        self.assertGreaterEqual(payload["elapsed"], 0.05)
+        self.assertLess(payload["elapsed"], 0.10 + _LIFECYCLE_SLACK_S)
+        self.assertEqual(payload["starters"], 0)
+        self._quiet(payload["children"], payload["active"], payload["orphans"])
+
+    def test_raising_getstate_returns_provider_error(self) -> None:
+        payload = _guard(_raising_state_case, (str(self.database), str(self.marker)), 8)
+        print(
+            f"G93 raise elapsed={payload['elapsed']:.3f} reason={payload['reason']} action={payload['action']} started={payload['started']}",
+            flush=True,
+        )
+        self.assertEqual(payload["reason"], "provider_error")
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["decision"])
+        self.assertEqual(payload["started"], 0)
+        self.assertEqual(payload["tools"], 0)
+        self.assertFalse(payload["marker"])
+        self.assertEqual(payload["action"], "start_failed")
+        self.assertEqual(payload["usage"], "unknown")
+        self.assertEqual(payload["message"], "provider 调用失败。")
+        self.assertNotIn("state refused", str(payload["message"]))
+        self.assertNotIn("state refused", str(payload["trace"]))
+        self.assertLess(payload["elapsed"], 0.10 + _LIFECYCLE_SLACK_S)
+        self.assertEqual(payload["starters"], 0)
+        self._quiet(payload["children"], payload["active"], payload["orphans"])
+
+    def test_blocked_getstate_stays_capped_under_an_external_timeout(self) -> None:
+        payload = _guard_live(_blocked_state_case, (str(self.database), str(self.marker)), 12)
+        runs = payload["runs"]
+        print(
+            f"G93 block held={payload['held']} spawn={payload['spawn_threads']} starters={payload['starters']} peak={payload['peak_starters']} children={payload['children']}",
+            flush=True,
+        )
+        self.assertEqual(len(runs), 9)
+        for run in runs[:8]:
+            self.assertEqual(run["reason"], "timeout")
+            self.assertFalse(run["ok"])
+            self.assertTrue(run["deadline"])
+            self.assertFalse(run["decision"])
+            self.assertEqual(run["started"], 0)
+            self.assertIsNone(run["resource"])
+            self.assertGreaterEqual(run["elapsed"], 0.05)
+            self.assertLess(run["elapsed"], 0.10 + _LIFECYCLE_SLACK_S)
+        refused = runs[8]
+        self.assertEqual(refused["reason"], "timeout")
+        self.assertFalse(refused["ok"])
+        self.assertFalse(refused["deadline"])
+        self.assertFalse(refused["decision"])
+        self.assertEqual(refused["started"], 0)
+        self.assertEqual(refused["resource"], "orphan_cap")
+        self.assertLess(refused["elapsed"], 0.10 + _LIFECYCLE_SLACK_S)
+        self.assertEqual(payload["held"], 8)
+        self.assertEqual(payload["spawn_threads"], 8)
+        self.assertGreaterEqual(payload["starters"], 8)
+        self.assertLessEqual(payload["starters"], 16)
+        self.assertLessEqual(payload["peak_starters"], 16)
+        self.assertFalse(payload["marker"])
+        self.assertEqual(payload["children"], [])
+        self.assertEqual(payload["active"], 0)
+        self.assertEqual(payload["orphans"], 0)
+
+    def test_repeated_serialization_timeouts_release_their_starters(self) -> None:
+        payload = _guard(_repeated_serialization_case, (str(self.database), str(self.marker)), 15)
+        runs = payload["runs"]
+        print(
+            f"G93 burst max_spawn={payload['max_spawn']} peak={payload['peak_starters']} starters={payload['starters']} children={payload['children']}",
+            flush=True,
+        )
+        self.assertEqual(len(runs), 5)
+        for run in runs:
+            self.assertEqual(run["reason"], "timeout")
+            self.assertFalse(run["ok"])
+            self.assertTrue(run["deadline"])
+            self.assertFalse(run["decision"])
+            self.assertEqual(run["started"], 0)
+            self.assertFalse(run["marker"])
+            self.assertIsNone(run["resource"])
+            self.assertGreaterEqual(run["elapsed"], 0.05)
+            self.assertLess(run["elapsed"], 0.10 + _LIFECYCLE_SLACK_S)
+        self.assertGreaterEqual(payload["max_spawn"], 1)
+        self.assertLessEqual(payload["max_spawn"], 8)
+        self.assertLessEqual(payload["peak_starters"], 16)
+        self.assertEqual(payload["starters"], 0)
+        self.assertFalse(payload["marker"])
+        self._quiet(payload["children"], payload["active"], payload["orphans"])
