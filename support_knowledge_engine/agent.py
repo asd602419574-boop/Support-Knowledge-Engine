@@ -11,14 +11,19 @@ decide_evidence says supported and the cited ids are the captured decision.
 
 from __future__ import annotations
 
+import ctypes
 import json
 import re
+import secrets
+import sys
+import threading
 import time
-from multiprocessing.reduction import ForkingPickler
 from collections.abc import Callable, Mapping
+from ctypes import wintypes
 from dataclasses import dataclass, replace
-from pathlib import Path
 from multiprocessing.context import BaseContext
+from multiprocessing.reduction import ForkingPickler
+from pathlib import Path
 from queue import Empty
 
 from . import agent_worker
@@ -82,6 +87,21 @@ _ACTION_PUNCT = re.compile(r"[^a-z0-9]+")
 _ALLOWED_ARGUMENT = "query"
 _POLL_S = 0.05
 _SEPARATOR = "\n---\n"
+_STARTER_CAP = 8
+_START_LOCK = threading.Lock()
+_STARTER_GUARD = threading.Lock()
+_LIVE_STARTERS = 0
+
+_KERNEL = ctypes.WinDLL("kernel32", use_last_error=True) if sys.platform == "win32" else None
+if _KERNEL is not None:
+    _KERNEL.CreateJobObjectW.restype = wintypes.HANDLE
+    _KERNEL.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    _KERNEL.AssignProcessToJobObject.restype = wintypes.BOOL
+    _KERNEL.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    _KERNEL.TerminateJobObject.restype = wintypes.BOOL
+    _KERNEL.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    _KERNEL.CloseHandle.restype = wintypes.BOOL
+    _KERNEL.CloseHandle.argtypes = [wintypes.HANDLE]
 
 _MESSAGES = {
     TERMINATION_COMPLETED: "运行已完成。",
@@ -321,8 +341,86 @@ class WorkerSnapshot:
     active: int
 
 
+class _WinJob:
+    """One Windows job for one worker. Closing the handle does not kill it."""
+
+    def __init__(self) -> None:
+        self._handle = None
+        if _KERNEL is None:
+            return
+        handle = _KERNEL.CreateJobObjectW(None, None)
+        if handle:
+            self._handle = handle
+
+    def assign(self, process: object) -> bool:
+        popen = getattr(process, "_popen", None)
+        handle = getattr(popen, "_handle", None)
+        if self._handle is None or not handle or _KERNEL is None:
+            return False
+        return bool(_KERNEL.AssignProcessToJobObject(self._handle, handle))
+
+    def terminate(self) -> None:
+        if self._handle is not None and _KERNEL is not None:
+            _KERNEL.TerminateJobObject(self._handle, 1)
+
+    def close(self) -> None:
+        if self._handle is not None and _KERNEL is not None:
+            _KERNEL.CloseHandle(self._handle)
+            self._handle = None
+
+
+class _WaitBudget:
+    """One cleanup allowance shared by every wait in the phase."""
+
+    def __init__(self, cleanup_s: float, hard: float) -> None:
+        self.cleanup_left = max(0.0, cleanup_s)
+        self.hard = hard
+
+    def slice(self) -> float:
+        run_left = max(0.0, self.hard - time.monotonic())
+        return max(0.0, min(self.cleanup_left, run_left))
+
+    def consume(self, started: float) -> None:
+        self.cleanup_left = max(0.0, self.cleanup_left - (time.monotonic() - started))
+
+
+def _process_alive(process: object) -> bool:
+    try:
+        return bool(process.is_alive())  # type: ignore[attr-defined]
+    except Exception:
+        return False
+
+
+def _starter_open(thread: threading.Thread) -> bool:
+    """A created thread is still owned until it has been started and has exited."""
+
+    return thread.ident is None or thread.is_alive()
+
+
+def _delay_allows_start(
+    cancel: threading.Event,
+    shutdown: threading.Event,
+    hard: float,
+    delay: float,
+) -> bool:
+    """Wait out a test delay without losing the cancel or the run deadline."""
+
+    if delay > 0:
+        remaining = delay
+        while remaining > 0:
+            if shutdown.is_set() or cancel.is_set() or time.monotonic() >= hard:
+                return False
+            step = min(0.05, remaining, hard - time.monotonic())
+            if step <= 0:
+                return False
+            if cancel.wait(step) or shutdown.is_set():
+                return False
+            remaining -= step
+    return not shutdown.is_set() and not cancel.is_set() and time.monotonic() < hard
+
+
 class WorkerRegistry:
-    """One process per job. Join, terminate, and kill all have finite waits."""
+    """One process per job. The run clock bounds start, wait, and cleanup."""
 
     def __init__(
         self,
@@ -339,14 +437,26 @@ class WorkerRegistry:
         self.max_active_workers = max_active_workers
         self.max_orphans = max_orphans
         self.kill_workers = kill_workers
+        self.spawn_delay_s = 0.0
+        self.spawn_delays: dict[str, float] = {}
         self._ctx = context if context is not None else get_context("spawn")
         self._active: list[object] = []
         self._orphans: list[object] = []
+        self._jobs: dict[int, _WinJob] = {}
+        self._starters: list[threading.Thread] = []
+        self._lock = threading.Lock()
+        self._shutdown = threading.Event()
         self.peak = 0
+        self.peak_starters = 0
 
     def snapshot(self) -> WorkerSnapshot:
-        self._reap_finished()
-        return WorkerSnapshot(self.peak, len(self._orphans), len(self._active))
+        with self._lock:
+            self._reap_finished()
+            return WorkerSnapshot(self.peak, len(self._orphans), len(self._active))
+
+    def pending_starters(self) -> int:
+        self._starters = [thread for thread in self._starters if _starter_open(thread)]
+        return len(self._starters)
 
     def run(
         self,
@@ -354,106 +464,417 @@ class WorkerRegistry:
         build_args: Callable[[object, object], tuple[object, ...]],
         wait_s: float,
         cancellation: CancellationToken | None,
+        deadline_at: float | None = None,
     ) -> dict[str, object]:
-        self._reap_finished()
-        if len(self._orphans) >= self.max_orphans:
-            return {"status": "refused", "resource_stop": "orphan_cap", "discarded": 0}
-        if len(self._active) >= self.max_active_workers:
-            return {"status": "refused", "resource_stop": "active_cap", "discarded": 0}
+        with self._lock:
+            self._reap_finished()
+            if len(self._orphans) >= self.max_orphans:
+                return {"status": "refused", "resource_stop": "orphan_cap", "discarded": 0, "reaped": True}
+            if len(self._active) >= self.max_active_workers:
+                return {"status": "refused", "resource_stop": "active_cap", "discarded": 0, "reaped": True}
+        hard = time.monotonic() + max(0.0, wait_s)
+        if deadline_at is not None:
+            hard = min(hard, deadline_at)
+        if hard <= time.monotonic():
+            return {"status": "timeout", "deadline_reached": True, "discarded": 0, "reaped": True}
         queue = self._ctx.Queue()
         cancel_event = self._ctx.Event()
-        process = None
         try:
-            process = self._ctx.Process(target=target, args=build_args(cancel_event, queue))
-            process.start()
+            args = build_args(cancel_event, queue)
+            process = self._ctx.Process(target=target, args=args)
         except Exception:
-            if process is not None:
-                self._abandon(process)
             _close_queue(queue)
-            return {"status": "start_failed", "discarded": 0}
-        self._active.append(process)
-        self.peak = max(self.peak, len(self._active))
-        deadline_at = time.monotonic() + max(0.0, wait_s)
+            return {"status": "start_failed", "discarded": 0, "reaped": True}
+        launched = self._launch(target, process, queue, cancel_event, cancellation, hard)
+        if launched.get("status") != "started":
+            return launched
+        process = launched["process"]
+        with self._lock:
+            self._active.append(process)
+            self.peak = max(self.peak, len(self._active))
         status = "running"
-        while process.is_alive():
+        while _process_alive(process):
             now = time.monotonic()
             if cancellation is not None and cancellation.is_cancelled():
                 status = "cancelled"
                 break
-            if now >= deadline_at:
+            if now >= hard:
                 status = "timeout"
                 break
-            process.join(min(_POLL_S, max(0.0, deadline_at - now)))
+            try:
+                process.join(min(_POLL_S, max(0.0, hard - now)))  # type: ignore[attr-defined]
+            except Exception:
+                break
         if status in {"timeout", "cancelled"}:
             cancel_event.set()
-            self._stop(process)
+            # The phase clock is already spent. Cleanup may still use its own
+            # budget, but only what the total run has left.
+            reaped = self._stop(process, self._cleanup_budget(deadline_at))
             discarded = _drain(queue)
             self._drop(process)
             _close_queue(queue)
-            if process.is_alive():
-                self._orphans.append(process)
-                return {"status": "orphan", "stop": status, "discarded": discarded}
-            return {"status": status, "discarded": discarded}
+            if not reaped:
+                self._track_orphan(process, self._jobs.get(id(process)))
+                return {
+                    "status": "orphan",
+                    "stop": status,
+                    "discarded": discarded,
+                    "reaped": False,
+                    "deadline_reached": status == "timeout",
+                }
+            self._release(process)
+            return {
+                "status": status,
+                "discarded": discarded,
+                "reaped": True,
+                "deadline_reached": status == "timeout",
+            }
         self._drop(process)
+        started = time.monotonic()
+        until_phase = max(0.0, hard - started)
+        until_run = until_phase if deadline_at is None else max(0.0, deadline_at - started)
+        wait_for = min(self.cleanup_timeout_s, until_phase, until_run)
+        run_capped = deadline_at is not None and wait_for + 1e-3 >= until_run
         try:
-            payload = queue.get(timeout=self.cleanup_timeout_s)
+            payload = queue.get(timeout=wait_for)
         except Empty:
-            self._stop(process)
+            spent = time.monotonic() - started
+            reaped = self._stop(process, self._cleanup_budget(deadline_at, spent=spent))
             _close_queue(queue)
-            process.join(0)
-            _close_process(process)
-            return {"status": "empty", "discarded": 0}
-        process.join(self.cleanup_timeout_s)
-        if process.is_alive():  # type: ignore[attr-defined]
-            self._stop(process)
+            if reaped:
+                self._release(process)
+            else:
+                self._track_orphan(process, self._jobs.get(id(process)))
+            run_clock = hard if deadline_at is None else deadline_at
+            deadline_hit = run_capped or time.monotonic() >= run_clock
+            return {
+                "status": "timeout" if deadline_hit else "empty",
+                "discarded": 0,
+                "reaped": reaped,
+                "deadline_reached": deadline_hit,
+            }
+        spent = time.monotonic() - started
+        reaped = self._join_cleanup(process, self._cleanup_budget(deadline_at, spent=spent))
         discarded = _drain(queue)
         _close_queue(queue)
-        process.join(0)
-        _close_process(process)
-        return {"status": "done", "payload": payload, "discarded": discarded}
+        if reaped:
+            self._release(process)
+        else:
+            self._track_orphan(process, self._jobs.get(id(process)))
+        return {
+            "status": "done",
+            "payload": payload,
+            "discarded": discarded,
+            "reaped": reaped,
+            "deadline_reached": time.monotonic() >= hard,
+        }
 
-    def force_reap(self) -> None:
-        for process in list(self._orphans) + list(self._active):
-            self._kill(process)
+    def _cleanup_budget(self, deadline_at: float | None, *, spent: float = 0.0) -> _WaitBudget:
+        """One cleanup allowance. It cannot outlive the run or restart after a wait."""
+
+        remaining = max(0.0, self.cleanup_timeout_s - spent)
+        if deadline_at is None:
+            ceiling = time.monotonic() + remaining
+        else:
+            ceiling = deadline_at
+        return _WaitBudget(remaining, ceiling)
+
+    def force_reap(self, budget_s: float | None = None) -> None:
+        """Stop owned work. One budget covers every remaining join."""
+
+        self._shutdown.set()
+        budget = self.cleanup_timeout_s if budget_s is None else max(0.0, float(budget_s))
+        end = time.monotonic() + budget
+        with self._lock:
+            processes = list(self._orphans) + list(self._active)
+        for process in processes:
+            self._kill(process, max(0.0, end - time.monotonic()))
+            if not _process_alive(process):
+                self._release(process)
+        with self._lock:
+            self._reap_finished()
+        for thread in list(self._starters):
+            thread.join(max(0.0, end - time.monotonic()))
+        self._starters = [thread for thread in self._starters if _starter_open(thread)]
+        self._shutdown.clear()
+
+    def _launch(
+        self,
+        target: object,
+        process: object,
+        queue: object,
+        cancel_event: object,
+        cancellation: CancellationToken | None,
+        hard: float,
+    ) -> dict[str, object]:
+        """Start away from the run stack. A late CreateProcess stays owned."""
+
+        delay = self._delay_for(target)
+        spawn_cancel = threading.Event()
+        holder: dict[str, object] = {"status": "not_started", "offer": False, "reaped": True}
+        ready = threading.Event()
+        if not self._reserve_starter():
             _close_process(process)
-        self._orphans.clear()
-        self._active.clear()
+            _close_queue(queue)
+            return {"status": "refused", "resource_stop": "orphan_cap", "discarded": 0, "reaped": True}
 
-    def _abandon(self, process: object) -> None:
-        try:
-            alive = bool(process.is_alive())  # type: ignore[attr-defined]
-        except Exception:
-            alive = False
-        if alive:
-            self._kill(process)
-        _close_process(process)
+        def body() -> None:
+            try:
+                if not _delay_allows_start(spawn_cancel, self._shutdown, hard, delay):
+                    holder["status"] = "not_started"
+                    return
+                with _START_LOCK:
+                    if spawn_cancel.is_set() or self._shutdown.is_set() or time.monotonic() >= hard:
+                        holder["status"] = "not_started"
+                        return
+                    try:
+                        process.start()  # type: ignore[attr-defined]
+                    except Exception:
+                        holder["status"] = "start_failed"
+                        holder["process"] = process
+                        return
+                    job = _WinJob()
+                    if not job.assign(process):
+                        job.close()
+                        job = None
+                    if spawn_cancel.is_set() or self._shutdown.is_set() or time.monotonic() >= hard:
+                        holder["status"] = "not_started"
+                        holder["process"] = process
+                        holder["job"] = job
+                        return
+                    holder["process"] = process
+                    holder["job"] = job
+                    holder["offer"] = True
+                    holder["status"] = "started"
+                    holder["reaped"] = False
+            finally:
+                if not holder.get("offer"):
+                    if "process" not in holder:
+                        _close_process(process)
+                    self._dismiss(holder, queue)
+                ready.set()
+                self._release_starter_slot()
 
-    def _stop(self, process: object) -> None:
+        thread = threading.Thread(target=body, name="g9-spawn", daemon=False)
+        self._starters.append(thread)
+        thread.start()
+        self.peak_starters = max(self.peak_starters, self.pending_starters())
+        while True:
+            remaining = hard - time.monotonic()
+            if remaining <= 0:
+                break
+            if ready.wait(min(0.05, remaining)):
+                break
+            if cancellation is not None and cancellation.is_cancelled():
+                spawn_cancel.set()
+                cancel_event.set()  # type: ignore[attr-defined]
+                self._follow(thread, holder, queue)
+                return {
+                    "status": "cancelled",
+                    "discarded": 0,
+                    "reaped": False,
+                    "pending_spawn": True,
+                    "deadline_reached": False,
+                }
+        if ready.is_set() and holder.get("offer") and time.monotonic() < hard and not spawn_cancel.is_set():
+            if cancellation is not None and cancellation.is_cancelled():
+                spawn_cancel.set()
+                cancel_event.set()  # type: ignore[attr-defined]
+                reaped = self._dismiss(holder, queue)
+                return {"status": "cancelled", "discarded": 0, "reaped": reaped, "deadline_reached": False}
+            job = holder.get("job")
+            if isinstance(job, _WinJob):
+                self._jobs[id(process)] = job
+            return {"status": "started", "process": process, "reaped": False}
+        spawn_cancel.set()
+        cancel_event.set()  # type: ignore[attr-defined]
+        if ready.is_set():
+            reaped = bool(holder.get("reaped")) if not holder.get("offer") else self._dismiss(holder, queue)
+            status = str(holder.get("status") or "not_started")
+            if status == "start_failed":
+                return {"status": "start_failed", "discarded": 0, "reaped": reaped, "deadline_reached": False}
+            return {
+                "status": "timeout",
+                "discarded": 0,
+                "reaped": reaped,
+                "deadline_reached": True,
+                "pending_spawn": status != "start_failed",
+            }
+        self._follow(thread, holder, queue)
+        return {
+            "status": "timeout",
+            "deadline_reached": True,
+            "discarded": 0,
+            "reaped": False,
+            "pending_spawn": True,
+        }
+
+    def _follow(self, thread: threading.Thread, holder: dict[str, object], queue: object) -> None:
+        """Reap a starter that may still be inside Process.start()."""
+
+        def finish() -> None:
+            thread.join()
+            if not holder.get("taken") and not holder.get("dismissed"):
+                self._dismiss(holder, queue)
+
+        follower = threading.Thread(target=finish, name="g9-spawn-reap", daemon=False)
+        self._starters.append(follower)
+        follower.start()
+        self.peak_starters = max(self.peak_starters, self.pending_starters())
+
+    def _dismiss(self, holder: dict[str, object], queue: object) -> bool:
+        with self._lock:
+            if holder.get("dismissed"):
+                return bool(holder.get("reaped"))
+            holder["dismissed"] = True
+            holder["taken"] = False
+        process = holder.get("process")
+        job = holder.get("job")
+        owned_job = job if isinstance(job, _WinJob) else None
+        reaped = True
+        if process is not None:
+            if _process_alive(process):
+                _force_stop(process, owned_job)
+            reaped = not _process_alive(process)
+            if reaped:
+                self._release(process, owned_job)
+            else:
+                self._track_orphan(process, owned_job)
+        elif owned_job is not None:
+            owned_job.close()
+        holder["reaped"] = reaped
+        _close_queue(queue)
+        return reaped
+
+    def _delay_for(self, target: object) -> float:
+        name = str(getattr(target, "__name__", ""))
+        if name in self.spawn_delays:
+            return max(0.0, float(self.spawn_delays[name]))
+        return max(0.0, float(self.spawn_delay_s))
+
+    def _reserve_starter(self) -> bool:
+        global _LIVE_STARTERS
+        with _STARTER_GUARD:
+            self._starters = [thread for thread in self._starters if _starter_open(thread)]
+            starting = [thread for thread in self._starters if thread.name != "g9-spawn-reap"]
+            if _LIVE_STARTERS >= _STARTER_CAP or len(starting) >= _STARTER_CAP:
+                return False
+            _LIVE_STARTERS += 1
+            return True
+
+    def _release_starter_slot(self) -> None:
+        global _LIVE_STARTERS
+        with _STARTER_GUARD:
+            _LIVE_STARTERS = max(0, _LIVE_STARTERS - 1)
+
+    def _stop(self, process: object, budget: _WaitBudget) -> bool:
         if not self.kill_workers:
-            return
-        self._kill(process)
+            return not _process_alive(process)
+        started = time.monotonic()
+        reaped = self._kill(process, budget.slice())
+        budget.consume(started)
+        return reaped
 
-    def _kill(self, process: object) -> None:
-        if not process.is_alive():  # type: ignore[attr-defined]
-            return
-        process.terminate()  # type: ignore[attr-defined]
-        process.join(self.cleanup_timeout_s)  # type: ignore[attr-defined]
-        if process.is_alive():  # type: ignore[attr-defined]
-            process.kill()  # type: ignore[attr-defined]
-            process.join(self.cleanup_timeout_s)  # type: ignore[attr-defined]
+    def _join_cleanup(self, process: object, budget: _WaitBudget) -> bool:
+        started = time.monotonic()
+        try:
+            process.join(budget.slice())  # type: ignore[attr-defined]
+        except Exception:
+            budget.consume(started)
+            return not _process_alive(process)
+        budget.consume(started)
+        if _process_alive(process):
+            return self._stop(process, budget)
+        return True
+
+    def _kill(self, process: object, budget_s: float) -> bool:
+        """Terminate and kill share one budget. A live process stays uncleaned."""
+
+        end = time.monotonic() + max(0.0, budget_s)
+
+        def left() -> float:
+            return max(0.0, end - time.monotonic())
+
+        if not _process_alive(process):
+            return True
+        job = self._jobs.get(id(process))
+        try:
+            process.terminate()  # type: ignore[attr-defined]
+        except Exception:
+            if job is not None:
+                job.terminate()
+        try:
+            process.join(left())  # type: ignore[attr-defined]
+        except Exception:
+            return not _process_alive(process)
+        if _process_alive(process) and left() > 0:
+            try:
+                process.kill()  # type: ignore[attr-defined]
+            except Exception:
+                if job is not None:
+                    job.terminate()
+            try:
+                process.join(left())  # type: ignore[attr-defined]
+            except Exception:
+                return not _process_alive(process)
+        if _process_alive(process) and job is not None:
+            job.terminate()
+            try:
+                process.join(left())  # type: ignore[attr-defined]
+            except Exception:
+                return not _process_alive(process)
+        return not _process_alive(process)
+
+    def _track_orphan(self, process: object, job: _WinJob | None) -> None:
+        with self._lock:
+            if job is not None:
+                self._jobs[id(process)] = job
+            if process not in self._orphans and process not in self._active:
+                self._orphans.append(process)
+
+    def _release(self, process: object, job: _WinJob | None = None) -> None:
+        owned = self._jobs.pop(id(process), None)
+        chosen = job if job is not None else owned
+        if chosen is not None:
+            chosen.close()
+        if owned is not None and owned is not chosen:
+            owned.close()
+        _close_process(process)
 
     def _reap_finished(self) -> None:
-        self._active = [process for process in self._active if process.is_alive()]  # type: ignore[attr-defined]
-        still_orphaned = []
-        for process in self._orphans:
-            if process.is_alive():  # type: ignore[attr-defined]
-                still_orphaned.append(process)
+        active = []
+        for process in self._active:
+            if _process_alive(process):
+                active.append(process)
             else:
-                _close_process(process)
-        self._orphans = still_orphaned
+                self._release(process)
+        orphans = []
+        for process in self._orphans:
+            if _process_alive(process):
+                orphans.append(process)
+            else:
+                self._release(process)
+        self._active = active
+        self._orphans = orphans
 
     def _drop(self, process: object) -> None:
-        self._active = [item for item in self._active if item is not process]
+        with self._lock:
+            self._active = [item for item in self._active if item is not process]
+
+
+def _force_stop(process: object, job: _WinJob | None) -> None:
+    if job is not None:
+        job.terminate()
+    if not _process_alive(process):
+        return
+    try:
+        process.terminate()  # type: ignore[attr-defined]
+    except Exception:
+        return
+    try:
+        process.join(0)  # type: ignore[attr-defined]
+    except Exception:
+        return
 
 
 def run_agent(
@@ -464,6 +885,7 @@ def run_agent(
 ) -> AgentResult:
     """Run one bounded loop. Every return path has a termination reason."""
 
+    deadline_at = _run_deadline_at(request)
     limits = request.limits if isinstance(request, AgentRequest) else AgentLimits()
     if registry is None:
         registry = WorkerRegistry(
@@ -476,10 +898,15 @@ def run_agent(
         )
     holder: dict[str, AgentResult] = {}
     try:
-        holder["result"] = _run(Path(database_path), request, registry)
+        holder["result"] = _run(Path(database_path), request, registry, deadline_at)
     finally:
         snap = registry.snapshot()
-        registry.force_reap()
+        if deadline_at is None:
+            registry.force_reap()
+        else:
+            remaining = max(0.0, deadline_at - time.monotonic())
+            registry.force_reap(budget_s=min(registry.cleanup_timeout_s, remaining))
+        settled = registry.snapshot()
         if "result" in holder:
             holder["result"] = replace(
                 holder["result"],
@@ -487,7 +914,7 @@ def run_agent(
                     holder["result"].trace,
                     worker_peak=max(holder["result"].trace.worker_peak, snap.peak),
                     orphans_at_stop=snap.orphans,
-                    active_workers=0,
+                    active_workers=settled.active,
                 ),
             )
     return holder["result"]
@@ -508,7 +935,12 @@ def canonical_action(tool_name: str, arguments: tuple[tuple[str, str], ...]) -> 
     return "|".join(parts)
 
 
-def _run(database_path: Path, request: object, registry: WorkerRegistry) -> AgentResult:
+def _run(
+    database_path: Path,
+    request: object,
+    registry: WorkerRegistry,
+    deadline_at: float | None = None,
+) -> AgentResult:
     if not isinstance(request, AgentRequest) or not _request_ok(request):
         return _result(
             request if isinstance(request, AgentRequest) else None,
@@ -527,7 +959,8 @@ def _run(database_path: Path, request: object, registry: WorkerRegistry) -> Agen
         return _result(request, _Stop(TERMINATION_TIMEOUT, resource_stop="orphan_cap"), draft, registry)
 
     draft = _Draft()
-    deadline_at = time.monotonic() + request.budget.run_deadline_s
+    if deadline_at is None:
+        deadline_at = time.monotonic() + request.budget.run_deadline_s
     while True:
         if _cancelled(request):
             return _result(request, _Stop(TERMINATION_TIMEOUT, cancelled=True), draft, registry)
@@ -580,8 +1013,11 @@ def _provider_attempts(
         if remaining is None:
             return _Stop(TERMINATION_BUDGET)
         payload = _provider_payload(request, draft, remaining, wait_s)
+        token = secrets.token_hex(8)
+        payload["job_token"] = token
         sentinel = _marker(request, f"provider-{draft.decide_cycles}-{attempt}")
-        if request.limits.provider_mode != "late" and not _spawnable(request.provider):
+        mode = request.limits.provider_mode
+        if mode not in {"late", "silent"} and not _spawnable(request.provider):
             draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
             _append_step(
                 draft,
@@ -596,7 +1032,7 @@ def _provider_attempts(
             return _Stop(TERMINATION_PROVIDER)
         draft.provider_starts += 1
         started = time.monotonic()
-        if request.limits.provider_mode == "late":
+        if mode == "late":
             outcome = registry.run(
                 agent_worker.late_result_job,
                 lambda event, queue, sleep_s=request.limits.blocker_sleep_s, mark=sentinel: (
@@ -606,6 +1042,15 @@ def _provider_attempts(
                 ),
                 wait_s,
                 request.cancellation,
+                deadline_at,
+            )
+        elif mode == "silent":
+            outcome = registry.run(
+                agent_worker.silent_exit_job,
+                lambda event, queue, mark=sentinel: (queue, mark, event),
+                wait_s,
+                request.cancellation,
+                deadline_at,
             )
         else:
             outcome = registry.run(
@@ -619,6 +1064,7 @@ def _provider_attempts(
                 ),
                 wait_s,
                 request.cancellation,
+                deadline_at,
             )
         latency_ms = int((time.monotonic() - started) * 1000)
         draft.late_rejected += int(outcome.get("discarded", 0))
@@ -637,6 +1083,22 @@ def _provider_attempts(
                 evidence_ids=(),
             )
             return _Stop(TERMINATION_PROVIDER)
+        if outcome.get("pending_spawn"):
+            draft.provider_starts -= 1
+            draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
+            _append_step(
+                draft,
+                request,
+                attempt,
+                latency_ms,
+                started_provider=False,
+                started_tool=False,
+                action=(("type", "not_started"),),
+                evidence_ids=(),
+            )
+            if status == "cancelled" or _cancelled(request):
+                return _Stop(TERMINATION_TIMEOUT, cancelled=True, deadline_reached=status != "cancelled")
+            return _Stop(TERMINATION_TIMEOUT, deadline_reached=True)
         if status in {"timeout", "cancelled", "orphan"}:
             draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
             _append_step(draft, request, attempt, latency_ms, started_provider=True, started_tool=False, action=(("type", "unavailable"),), evidence_ids=())
@@ -647,6 +1109,22 @@ def _provider_attempts(
             draft.provider_starts -= 1
             draft.resource_stop = str(outcome.get("resource_stop"))
             return _Stop(TERMINATION_TIMEOUT, resource_stop=draft.resource_stop)
+        closed = _publication_stop(request, deadline_at, status, outcome)
+        if closed is not None:
+            if status == "done":
+                draft.late_rejected += 1
+            draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
+            _append_step(
+                draft,
+                request,
+                attempt,
+                latency_ms,
+                started_provider=True,
+                started_tool=False,
+                action=(("type", "unavailable"),),
+                evidence_ids=(),
+            )
+            return closed
         if status != "done" or not isinstance(outcome.get("payload"), dict):
             draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
             _append_step(draft, request, attempt, latency_ms, started_provider=True, started_tool=False, action=(("type", "empty"),), evidence_ids=())
@@ -654,6 +1132,37 @@ def _provider_attempts(
                 return _Stop(TERMINATION_BUDGET)
             return _Stop(TERMINATION_PROVIDER)
         body = outcome["payload"]
+        if not _payload_matches(body, kind="provider", token=token, run_id=request.run_id):
+            draft.late_rejected += 1
+            draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
+            _append_step(
+                draft,
+                request,
+                attempt,
+                latency_ms,
+                started_provider=True,
+                started_tool=False,
+                action=(("type", "untrusted"),),
+                evidence_ids=(),
+            )
+            return _Stop(TERMINATION_PROVIDER)
+        if _cancelled(request) or time.monotonic() >= deadline_at:
+            draft.late_rejected += 1
+            draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
+            _append_step(
+                draft,
+                request,
+                attempt,
+                latency_ms,
+                started_provider=True,
+                started_tool=False,
+                action=(("type", "unavailable"),),
+                evidence_ids=(),
+            )
+            return _publication_stop(request, deadline_at, status, outcome) or _Stop(
+                TERMINATION_TIMEOUT,
+                deadline_reached=True,
+            )
         _apply_provider_progress(request.provider, body.get("provider_progress"))
         usage = _usage_from_body(body)
         draft.ledger.add(usage)
@@ -715,6 +1224,7 @@ def _act(
         return _Stop(TERMINATION_TIMEOUT, deadline_reached=True)
     draft.tool_starts += 1
     sentinel = _marker(request, f"tool-{draft.decide_cycles}")
+    token = secrets.token_hex(8)
     job_payload = {
         "database_path": str(database_path),
         "query": query,
@@ -727,17 +1237,24 @@ def _act(
         "deadline_s": wait_s,
         "retrieval_mode": request.limits.retrieval_mode,
         "sleep_s": request.limits.blocker_sleep_s,
+        "job_token": token,
+        "run_id": request.run_id,
     }
     outcome = registry.run(
         agent_worker.retrieval_job,
-        lambda event, queue, body=job_payload, mark=sentinel: (body, queue, mark),
+        lambda event, queue, body=job_payload, mark=sentinel: (body, queue, mark, event),
         wait_s,
         request.cancellation,
+        deadline_at,
     )
     draft.late_rejected += int(outcome.get("discarded", 0))
     status = str(outcome.get("status"))
-    if status == "start_failed":
+    if status == "start_failed" or outcome.get("pending_spawn"):
         draft.tool_starts -= 1
+        if outcome.get("pending_spawn") and status != "start_failed":
+            if status == "cancelled" or _cancelled(request):
+                return _Stop(TERMINATION_TIMEOUT, cancelled=True, deadline_reached=status != "cancelled")
+            return _Stop(TERMINATION_TIMEOUT, deadline_reached=True)
         return _Stop(TERMINATION_TOOL)
     if status in {"timeout", "cancelled", "orphan"}:
         if status == "cancelled" or _cancelled(request):
@@ -747,15 +1264,31 @@ def _act(
         draft.tool_starts -= 1
         draft.resource_stop = str(outcome.get("resource_stop"))
         return _Stop(TERMINATION_TIMEOUT, resource_stop=draft.resource_stop)
+    closed = _publication_stop(request, deadline_at, status, outcome)
+    if closed is not None:
+        if status == "done":
+            draft.late_rejected += 1
+        return closed
     if status != "done" or not isinstance(outcome.get("payload"), dict):
         return _Stop(TERMINATION_TOOL)
     body = outcome["payload"]
+    if not _payload_matches(body, kind="tool", token=token, run_id=request.run_id):
+        draft.late_rejected += 1
+        return _Stop(TERMINATION_TOOL)
+    if _cancelled(request) or time.monotonic() >= deadline_at:
+        draft.late_rejected += 1
+        return _publication_stop(request, deadline_at, status, outcome) or _Stop(
+            TERMINATION_TIMEOUT,
+            deadline_reached=True,
+        )
     draft.capture_calls += int(body.get("capture_calls") or 0)
     if body.get("ok") is not True or not isinstance(body.get("packet"), EvidencePacket):
         return _Stop(TERMINATION_TOOL)
-    if time.monotonic() >= deadline_at:
+    if time.monotonic() >= deadline_at or _cancelled(request):
         draft.late_rejected += 1
-        return _Stop(TERMINATION_TIMEOUT, deadline_reached=True)
+        if _cancelled(request) and time.monotonic() < deadline_at:
+            return _Stop(TERMINATION_TIMEOUT, cancelled=True)
+        return _Stop(TERMINATION_TIMEOUT, cancelled=_cancelled(request), deadline_reached=True)
     packet = body["packet"]
     decision = decide_evidence(packet)
     draft.packets.append(packet)
@@ -807,16 +1340,24 @@ def _finish_decision(
     if wait_s <= 0:
         return _Stop(TERMINATION_TIMEOUT, deadline_reached=True, proposed=reason, proposal=proposal)
     sentinel = _marker(request, "finalizer")
-    payload = {"mode": request.limits.finalizer_mode, "reason": reason, "sleep_s": request.limits.blocker_sleep_s}
+    token = secrets.token_hex(8)
+    payload = {
+        "mode": request.limits.finalizer_mode,
+        "reason": reason,
+        "sleep_s": request.limits.blocker_sleep_s,
+        "job_token": token,
+        "run_id": request.run_id,
+    }
     outcome = registry.run(
         agent_worker.finalizer_job,
-        lambda event, queue, body=payload, mark=sentinel: (body, queue, mark),
+        lambda event, queue, body=payload, mark=sentinel: (body, queue, mark, event),
         wait_s,
         request.cancellation,
+        deadline_at,
     )
     draft.late_rejected += int(outcome.get("discarded", 0))
     status = str(outcome.get("status"))
-    if status != "done":
+    if status != "done" or outcome.get("pending_spawn"):
         cancelled = status == "cancelled" or _cancelled(request)
         return _Stop(
             TERMINATION_TIMEOUT,
@@ -825,11 +1366,34 @@ def _finish_decision(
             proposed=reason,
             proposal=proposal,
         )
+    closed = _publication_stop(request, deadline_at, status, outcome)
+    if closed is not None:
+        draft.late_rejected += 1
+        return _Stop(
+            closed.reason,
+            cancelled=closed.cancelled,
+            deadline_reached=closed.deadline_reached,
+            proposed=reason,
+            proposal=proposal,
+        )
     body = outcome.get("payload")
-    if not isinstance(body, dict) or body.get("status") != "sealed":
+    if (
+        not _payload_matches(body, kind="finalizer", token=token, run_id=request.run_id)
+        or body.get("status") != "sealed"
+        or str(body.get("reason")) != reason
+    ):
         draft.late_rejected += 1
         return _Stop(TERMINATION_TIMEOUT, deadline_reached=True, proposed=reason, proposal=proposal)
-    if str(body.get("reason")) != reason:
+    if _cancelled(request):
+        draft.late_rejected += 1
+        return _Stop(
+            TERMINATION_TIMEOUT,
+            cancelled=True,
+            deadline_reached=time.monotonic() >= deadline_at,
+            proposed=reason,
+            proposal=proposal,
+        )
+    if time.monotonic() >= deadline_at:
         draft.late_rejected += 1
         return _Stop(TERMINATION_TIMEOUT, deadline_reached=True, proposed=reason, proposal=proposal)
     return _Stop(reason, decision=decision, proposal=proposal, proposed=reason)
@@ -849,25 +1413,42 @@ def _telemetry(
     if wait_s <= 0:
         return _Stop(TERMINATION_TIMEOUT, deadline_reached=True)
     sentinel = _marker(request, f"telemetry-{draft.decide_cycles}")
+    token = secrets.token_hex(8)
     payload = {
         "mode": request.limits.telemetry_mode,
         "sleep_s": request.limits.blocker_sleep_s,
         "query_marker": class_c_query_text(query),
         "result_count": len(packet.evidence),
+        "job_token": token,
+        "run_id": request.run_id,
     }
     outcome = registry.run(
         agent_worker.telemetry_job,
-        lambda event, queue, body=payload, mark=sentinel: (body, queue, mark),
+        lambda event, queue, body=payload, mark=sentinel: (body, queue, mark, event),
         wait_s,
         request.cancellation,
+        deadline_at,
     )
     draft.late_rejected += int(outcome.get("discarded", 0))
     status = str(outcome.get("status"))
-    if status != "done":
+    if status != "done" or outcome.get("pending_spawn"):
         cancelled = status == "cancelled" or _cancelled(request)
         return _Stop(TERMINATION_TIMEOUT, cancelled=cancelled, deadline_reached=not cancelled)
+    closed = _publication_stop(request, deadline_at, status, outcome)
+    if closed is not None:
+        draft.late_rejected += 1
+        return closed
     body = outcome.get("payload")
-    if not isinstance(body, dict) or body.get("status") != "recorded":
+    if (
+        not _payload_matches(body, kind="telemetry", token=token, run_id=request.run_id)
+        or body.get("status") != "recorded"
+    ):
+        draft.late_rejected += 1
+        return _Stop(TERMINATION_TIMEOUT, deadline_reached=True)
+    if _cancelled(request):
+        draft.late_rejected += 1
+        return _Stop(TERMINATION_TIMEOUT, cancelled=True, deadline_reached=time.monotonic() >= deadline_at)
+    if time.monotonic() >= deadline_at:
         draft.late_rejected += 1
         return _Stop(TERMINATION_TIMEOUT, deadline_reached=True)
     return None
@@ -1275,7 +1856,7 @@ def _limits_ok(limits: AgentLimits) -> bool:
         return False
     if limits.retrieval_mode not in {"capture", "block", "sqlite_block"}:
         return False
-    if limits.provider_mode not in {"invoke", "late"}:
+    if limits.provider_mode not in {"invoke", "late", "silent"}:
         return False
     if type(limits.kill_workers) is not bool:
         return False
@@ -1304,6 +1885,44 @@ def _deadline_ok(value: object) -> bool:
 
 def _cancelled(request: AgentRequest) -> bool:
     return request.cancellation is not None and request.cancellation.is_cancelled()
+
+
+def _run_deadline_at(request: object) -> float | None:
+    """Absolute run deadline, counted from the moment the main run is entered."""
+
+    budget = getattr(request, "budget", None)
+    if not isinstance(budget, AgentBudget):
+        return None
+    value = budget.run_deadline_s
+    if not _deadline_ok(value):
+        return None
+    return time.monotonic() + float(value)
+
+
+def _payload_matches(body: object, *, kind: str, token: str, run_id: str) -> bool:
+    return (
+        isinstance(body, dict)
+        and body.get("kind") == kind
+        and body.get("job_token") == token
+        and body.get("run_id") == run_id
+    )
+
+
+def _publication_stop(
+    request: AgentRequest,
+    deadline_at: float,
+    status: str,
+    outcome: Mapping[str, object],
+) -> _Stop | None:
+    """Block publication after the run clock or a cancellation has closed the phase."""
+
+    cancelled = status == "cancelled" or _cancelled(request)
+    timed_out = bool(outcome.get("deadline_reached")) or time.monotonic() >= deadline_at
+    if not cancelled and not timed_out:
+        return None
+    if cancelled and (status == "cancelled" or not timed_out):
+        return _Stop(TERMINATION_TIMEOUT, cancelled=True, deadline_reached=False)
+    return _Stop(TERMINATION_TIMEOUT, cancelled=cancelled, deadline_reached=True)
 
 
 def _marker(request: AgentRequest, name: str) -> str | None:

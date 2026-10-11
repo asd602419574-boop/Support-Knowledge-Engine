@@ -153,6 +153,21 @@ def split_observation(observation: str) -> tuple[dict[str, object], str]:
     return parsed, tail
 
 
+def _cancelled_at_entry(cancel_event: object) -> bool:
+    """True when the parent already gave up before this process began work."""
+
+    is_set = getattr(cancel_event, "is_set", None)
+    return bool(callable(is_set) and is_set())
+
+
+def _emit(queue: object, payload: dict[str, object], body: dict[str, object]) -> None:
+    """Stamp the job that produced this payload, then submit it once."""
+
+    body["job_token"] = payload.get("job_token")
+    body["run_id"] = payload.get("run_id")
+    _put(queue, body)
+
+
 def provider_job(
     provider: object,
     payload: dict[str, object],
@@ -162,6 +177,8 @@ def provider_job(
 ) -> None:
     """Invoke one provider inside this process."""
 
+    if _cancelled_at_entry(cancel_event):
+        return
     _mark(sentinel)
     token = CancellationToken()
     watcher = threading.Thread(
@@ -213,6 +230,8 @@ def provider_job(
         }
     dumped["provider_progress"] = _provider_progress(provider)
     dumped["visible_evidence"] = visible
+    dumped["job_token"] = payload.get("job_token")
+    dumped["run_id"] = payload.get("run_id")
     _put(queue, dumped)
 
 
@@ -220,20 +239,27 @@ def retrieval_job(
     payload: dict[str, object],
     queue: object,
     sentinel: str | None,
+    cancel_event: object = None,
 ) -> None:
     """Capture one packet on a connection this process owns."""
 
+    if _cancelled_at_entry(cancel_event):
+        return
     _mark(sentinel)
     mode = str(payload["retrieval_mode"])
     if mode == "block":
         time.sleep(float(payload["sleep_s"]))  # type: ignore[arg-type]
-        _put(queue, {"kind": "tool", "ok": False, "error_type": "blocked", "capture_calls": 0})
+        _emit(queue, payload, {"kind": "tool", "ok": False, "error_type": "blocked", "capture_calls": 0})
         return
     if mode == "sqlite_block":
         try:
             connection = _connect(str(payload["database_path"]))
         except sqlite3.Error:
-            _put(queue, {"kind": "tool", "ok": False, "error_type": "retrieval_failure", "capture_calls": 0, "packet": None})
+            _emit(
+                queue,
+                payload,
+                {"kind": "tool", "ok": False, "error_type": "retrieval_failure", "capture_calls": 0, "packet": None},
+            )
             return
         try:
             connection.execute(
@@ -241,14 +267,18 @@ def retrieval_job(
                 "SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 1000000000"
                 ") SELECT max(x) FROM c"
             )
-            _put(queue, {"kind": "tool", "ok": True, "capture_calls": 0, "packet": None})
+            _emit(queue, payload, {"kind": "tool", "ok": True, "capture_calls": 0, "packet": None})
         finally:
             connection.close()
         return
     try:
         connection = _connect(str(payload["database_path"]))
     except sqlite3.Error:
-        _put(queue, {"kind": "tool", "ok": False, "error_type": "retrieval_failure", "capture_calls": 0, "packet": None})
+        _emit(
+            queue,
+            payload,
+            {"kind": "tool", "ok": False, "error_type": "retrieval_failure", "capture_calls": 0, "packet": None},
+        )
         return
     try:
         packet = capture_evidence_packet(
@@ -264,10 +294,15 @@ def retrieval_job(
             else None,
             retrieval_deadline_s=float(payload["deadline_s"]),  # type: ignore[arg-type]
         )
-        _put(queue, {"kind": "tool", "ok": True, "error_type": None, "capture_calls": 1, "packet": packet})
-    except EvidenceCaptureError as exc:
-        _put(
+        _emit(
             queue,
+            payload,
+            {"kind": "tool", "ok": True, "error_type": None, "capture_calls": 1, "packet": packet},
+        )
+    except EvidenceCaptureError as exc:
+        _emit(
+            queue,
+            payload,
             {
                 "kind": "tool",
                 "ok": False,
@@ -277,8 +312,9 @@ def retrieval_job(
             },
         )
     except Exception:
-        _put(
+        _emit(
             queue,
+            payload,
             {
                 "kind": "tool",
                 "ok": False,
@@ -291,16 +327,24 @@ def retrieval_job(
         connection.close()
 
 
-def telemetry_job(payload: dict[str, object], queue: object, sentinel: str | None) -> None:
+def telemetry_job(
+    payload: dict[str, object],
+    queue: object,
+    sentinel: str | None,
+    cancel_event: object = None,
+) -> None:
     """Record or block. This job does not receive a database connection."""
 
+    if _cancelled_at_entry(cancel_event):
+        return
     _mark(sentinel)
     if str(payload["mode"]) == "block":
         time.sleep(float(payload["sleep_s"]))  # type: ignore[arg-type]
-        _put(queue, {"kind": "telemetry", "status": "late"})
+        _emit(queue, payload, {"kind": "telemetry", "status": "late"})
         return
-    _put(
+    _emit(
         queue,
+        payload,
         {
             "kind": "telemetry",
             "status": "recorded",
@@ -310,15 +354,35 @@ def telemetry_job(payload: dict[str, object], queue: object, sentinel: str | Non
     )
 
 
-def finalizer_job(payload: dict[str, object], queue: object, sentinel: str | None) -> None:
+def finalizer_job(
+    payload: dict[str, object],
+    queue: object,
+    sentinel: str | None,
+    cancel_event: object = None,
+) -> None:
     """Seal or block. A late ack must not become the published termination."""
 
+    if _cancelled_at_entry(cancel_event):
+        return
     _mark(sentinel)
     if str(payload["mode"]) == "block":
         time.sleep(float(payload["sleep_s"]))  # type: ignore[arg-type]
-        _put(queue, {"kind": "finalizer", "status": "late", "reason": str(payload["reason"])})
+        _emit(
+            queue,
+            payload,
+            {"kind": "finalizer", "status": "late", "reason": str(payload["reason"])},
+        )
         return
-    _put(queue, {"kind": "finalizer", "status": "sealed", "reason": str(payload["reason"])})
+    _emit(queue, payload, {"kind": "finalizer", "status": "sealed", "reason": str(payload["reason"])})
+
+
+def silent_exit_job(queue: object, sentinel: str | None, cancel_event: object = None) -> None:
+    """Leave the process without a result. The parent must not invent one."""
+
+    del queue
+    if _cancelled_at_entry(cancel_event):
+        return
+    _mark(sentinel)
 
 
 def late_result_job(queue: object, sentinel: str | None, sleep_s: float) -> None:
