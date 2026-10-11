@@ -171,6 +171,7 @@ def provider_job(
         daemon=True,
     )
     watcher.start()
+    visible: list[dict[str, str]] = []
     try:
         request = build_provider_request(
             run_id=str(payload["run_id"]),
@@ -187,31 +188,32 @@ def provider_job(
             deadline_monotonic=time.monotonic() + float(payload["deadline_s"]),  # type: ignore[arg-type]
             cancellation=token,
         )
+        visible = _visible_evidence(request.evidence)
         result = invoke_provider(provider, request)
-        _put(queue, _dump_provider(result))
+        dumped = _dump_provider(result)
     except Exception:
-        _put(
-            queue,
-            {
-                "kind": "provider",
-                "ok": False,
-                "started": True,
-                "action_type": None,
-                "tool_name": None,
-                "arguments": [],
-                "outcome": None,
-                "query_reformulation": "",
-                "reason_code": None,
-                "evidence_references": [],
-                "provider_id": str(getattr(provider, "provider_id", "")),
-                "model_version": str(getattr(provider, "model_version", "")),
-                "usage_state": USAGE_UNKNOWN,
-                "input_tokens": None,
-                "output_tokens": None,
-                "total_tokens": None,
-                "error_type": "provider_error",
-            },
-        )
+        dumped = {
+            "kind": "provider",
+            "ok": False,
+            "started": True,
+            "action_type": None,
+            "tool_name": None,
+            "arguments": [],
+            "outcome": None,
+            "query_reformulation": "",
+            "reason_code": None,
+            "evidence_references": [],
+            "provider_id": str(getattr(provider, "provider_id", "")),
+            "model_version": str(getattr(provider, "model_version", "")),
+            "usage_state": USAGE_UNKNOWN,
+            "input_tokens": None,
+            "output_tokens": None,
+            "total_tokens": None,
+            "error_type": "provider_error",
+        }
+    dumped["provider_progress"] = _provider_progress(provider)
+    dumped["visible_evidence"] = visible
+    _put(queue, dumped)
 
 
 def retrieval_job(
@@ -372,6 +374,36 @@ def evidence_summary_item(
         transformation_version="retrieval-excerpt-v1",
         untrusted_text=untrusted_text,
     )
+
+
+def _provider_progress(provider: object) -> dict[str, int]:
+    """Absolute script position after this call. The parent copies it back."""
+
+    progress: dict[str, int] = {}
+    cursor = getattr(provider, "_cursor", None)
+    calls = getattr(provider, "calls", None)
+    if type(cursor) is int:
+        progress["cursor"] = cursor
+    if type(calls) is int:
+        progress["calls"] = calls
+    return progress
+
+
+def _visible_evidence(evidence: object) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    if not isinstance(evidence, tuple):
+        return rows
+    for item in evidence:
+        source = getattr(item, "source", None)
+        rows.append(
+            {
+                "evidence_id": str(getattr(item, "evidence_id", "")),
+                "document_identity": str(getattr(source, "document_identity", "")),
+                "source_locator": str(getattr(source, "source_locator", "")),
+                "transformation_version": str(getattr(item, "transformation_version", "")),
+            }
+        )
+    return rows
 
 
 def _select_rule(

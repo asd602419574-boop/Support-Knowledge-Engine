@@ -62,6 +62,17 @@ class DeterministicProvider:
         self.entered = threading.Event()
         self._block_s = block_s if type(block_s) in (int, float) and block_s > 0 else 0.0
 
+    def __getstate__(self) -> dict[str, object]:
+        """Leave the in-process wait event behind. The script cursor still travels."""
+
+        state = dict(self.__dict__)
+        state.pop("entered", None)
+        return state
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        self.__dict__.update(state)
+        self.entered = threading.Event()
+
     def produce(self, request: ProviderRequest, clock: object) -> object:
         self.calls += 1
         self.entered.set()

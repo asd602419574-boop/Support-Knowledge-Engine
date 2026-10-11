@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from multiprocessing.reduction import ForkingPickler
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -361,8 +362,15 @@ class WorkerRegistry:
             return {"status": "refused", "resource_stop": "active_cap", "discarded": 0}
         queue = self._ctx.Queue()
         cancel_event = self._ctx.Event()
-        process = self._ctx.Process(target=target, args=build_args(cancel_event, queue))
-        process.start()
+        process = None
+        try:
+            process = self._ctx.Process(target=target, args=build_args(cancel_event, queue))
+            process.start()
+        except Exception:
+            if process is not None:
+                self._abandon(process)
+            _close_queue(queue)
+            return {"status": "start_failed", "discarded": 0}
         self._active.append(process)
         self.peak = max(self.peak, len(self._active))
         deadline_at = time.monotonic() + max(0.0, wait_s)
@@ -390,10 +398,14 @@ class WorkerRegistry:
         try:
             payload = queue.get(timeout=self.cleanup_timeout_s)
         except Empty:
+            self._stop(process)
             _close_queue(queue)
             process.join(0)
             _close_process(process)
             return {"status": "empty", "discarded": 0}
+        process.join(self.cleanup_timeout_s)
+        if process.is_alive():  # type: ignore[attr-defined]
+            self._stop(process)
         discarded = _drain(queue)
         _close_queue(queue)
         process.join(0)
@@ -406,6 +418,15 @@ class WorkerRegistry:
             _close_process(process)
         self._orphans.clear()
         self._active.clear()
+
+    def _abandon(self, process: object) -> None:
+        try:
+            alive = bool(process.is_alive())  # type: ignore[attr-defined]
+        except Exception:
+            alive = False
+        if alive:
+            self._kill(process)
+        _close_process(process)
 
     def _stop(self, process: object) -> None:
         if not self.kill_workers:
@@ -560,6 +581,19 @@ def _provider_attempts(
             return _Stop(TERMINATION_BUDGET)
         payload = _provider_payload(request, draft, remaining, wait_s)
         sentinel = _marker(request, f"provider-{draft.decide_cycles}-{attempt}")
+        if request.limits.provider_mode != "late" and not _spawnable(request.provider):
+            draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
+            _append_step(
+                draft,
+                request,
+                attempt,
+                0,
+                started_provider=False,
+                started_tool=False,
+                action=(("type", "start_failed"),),
+                evidence_ids=(),
+            )
+            return _Stop(TERMINATION_PROVIDER)
         draft.provider_starts += 1
         started = time.monotonic()
         if request.limits.provider_mode == "late":
@@ -589,6 +623,20 @@ def _provider_attempts(
         latency_ms = int((time.monotonic() - started) * 1000)
         draft.late_rejected += int(outcome.get("discarded", 0))
         status = str(outcome.get("status"))
+        if status == "start_failed":
+            draft.provider_starts -= 1
+            draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
+            _append_step(
+                draft,
+                request,
+                attempt,
+                latency_ms,
+                started_provider=False,
+                started_tool=False,
+                action=(("type", "start_failed"),),
+                evidence_ids=(),
+            )
+            return _Stop(TERMINATION_PROVIDER)
         if status in {"timeout", "cancelled", "orphan"}:
             draft.ledger.add(TokenUse(USAGE_UNKNOWN, None, None, None))
             _append_step(draft, request, attempt, latency_ms, started_provider=True, started_tool=False, action=(("type", "unavailable"),), evidence_ids=())
@@ -606,6 +654,7 @@ def _provider_attempts(
                 return _Stop(TERMINATION_BUDGET)
             return _Stop(TERMINATION_PROVIDER)
         body = outcome["payload"]
+        _apply_provider_progress(request.provider, body.get("provider_progress"))
         usage = _usage_from_body(body)
         draft.ledger.add(usage)
         if isinstance(body.get("provider_id"), str) and body.get("provider_id"):
@@ -687,6 +736,9 @@ def _act(
     )
     draft.late_rejected += int(outcome.get("discarded", 0))
     status = str(outcome.get("status"))
+    if status == "start_failed":
+        draft.tool_starts -= 1
+        return _Stop(TERMINATION_TOOL)
     if status in {"timeout", "cancelled", "orphan"}:
         if status == "cancelled" or _cancelled(request):
             return _Stop(TERMINATION_TIMEOUT, cancelled=True)
@@ -917,23 +969,15 @@ def _provider_payload(
     remaining: tuple[int, int, int],
     wait_s: float,
 ) -> dict[str, object]:
-    evidence = []
-    for packet in draft.packets:
-        for item in packet.evidence:
-            if len(evidence) >= 8:
-                break
-            identity = item.document_identity
-            locator = f"sha256:{item.pdf_sha256}/page/{item.page_number}"
-            if not identity.startswith("sha256:") or len(locator) > 120:
-                continue
-            evidence.append(
-                agent_worker.evidence_summary_item(
-                    item.evidence_id,
-                    identity,
-                    locator,
-                    item.decision_visible_representation[:2000],
-                )
-            )
+    evidence = [
+        agent_worker.evidence_summary_item(
+            item.evidence_id,
+            identity,
+            locator,
+            item.decision_visible_representation[:2000],
+        )
+        for item, identity, locator in _evidence_window(draft)
+    ]
     return {
         "run_id": request.run_id,
         "case_id": request.case_id,
@@ -946,6 +990,45 @@ def _provider_payload(
         "max_total_tokens": remaining[2],
         "deadline_s": wait_s,
     }
+
+
+def _evidence_window(
+    draft: _Draft,
+) -> list[tuple[object, str, str]]:
+    """Keep the newest eight valid items. Older captures leave the window first."""
+
+    chosen: list[tuple[object, str, str]] = []
+    for packet in draft.packets:
+        for item in packet.evidence:
+            identity = item.document_identity
+            locator = f"sha256:{item.pdf_sha256}/page/{item.page_number}"
+            if not identity.startswith("sha256:") or len(locator) > 120:
+                continue
+            chosen.append((item, identity, locator))
+    return chosen[-8:]
+
+
+def _spawnable(provider: object) -> bool:
+    """Reject a provider before CreateProcess. A failed pickle must not start a child."""
+
+    try:
+        ForkingPickler.dumps(provider)
+    except Exception:
+        return False
+    return True
+
+
+def _apply_provider_progress(provider: object, progress: object) -> None:
+    """Copy the script cursor back. The child process has its own object."""
+
+    if not isinstance(progress, dict):
+        return
+    cursor = progress.get("cursor")
+    calls = progress.get("calls")
+    if type(cursor) is int and hasattr(provider, "_cursor"):
+        setattr(provider, "_cursor", cursor)
+    if type(calls) is int and hasattr(provider, "calls"):
+        setattr(provider, "calls", calls)
 
 
 def _observation(
@@ -986,12 +1069,29 @@ def _action_summary(body: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
                 keys.append(str(pair[0]))
                 if pair[0] == _ALLOWED_ARGUMENT:
                     query = str(pair[1])
+    visible_ids: list[str] = []
+    visible_identities: list[str] = []
+    visible_locators: list[str] = []
+    visible_versions: list[str] = []
+    visible = body.get("visible_evidence")
+    if isinstance(visible, list):
+        for item in visible:
+            if not isinstance(item, dict):
+                continue
+            visible_ids.append(str(item.get("evidence_id") or ""))
+            visible_identities.append(str(item.get("document_identity") or ""))
+            visible_locators.append(str(item.get("source_locator") or ""))
+            visible_versions.append(str(item.get("transformation_version") or ""))
     return (
         ("type", str(body.get("action_type") or "")),
         ("tool", tool_name),
         ("query_marker", class_c_query_text(query) if query else ""),
         ("argument_keys", ",".join(sorted(keys))),
         ("proposal", str(body.get("outcome") or "")),
+        ("visible_evidence_ids", ",".join(visible_ids)),
+        ("visible_document_identities", ",".join(visible_identities)),
+        ("visible_source_locators", ",".join(visible_locators)),
+        ("visible_transformation_versions", ",".join(visible_versions)),
     )
 
 
