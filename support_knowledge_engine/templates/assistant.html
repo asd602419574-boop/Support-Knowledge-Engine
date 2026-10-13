@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}AI 售后助手 · Support Knowledge Engine{% endblock %}
+{% block content %}
+<section class="panel assistant-panel">
+  <h1>AI 售后助手</h1>
+  <p>选择产品并描述故障，使用已核验的 PDF 证据生成可追溯的排查清单。</p>
+  <p class="alert {{ 'alert-success' if model_status.configured else 'alert-warning' }}" id="model-configuration">{{ model_status.message }}</p>
+  {% if model_status.configured %}<p>目标模型：{{ llm_model }}</p>{% endif %}
+  <form id="assistant-form" data-csrf="{{ csrf_token }}" data-url="{{ url_for('assistant.ask') }}">
+    <label for="assistant-product">产品（必选）</label>
+    <select id="assistant-product" name="product_id" required>
+      <option value="">请选择产品</option>
+      {% for product in products %}<option value="{{ product.id }}">{{ product.standard_name }} · {{ product_status_labels.get(product.status, product.status) }}</option>{% endfor %}
+    </select>
+    <label for="assistant-firmware">固件版本（可选）</label>
+    <input id="assistant-firmware" name="firmware_version" maxlength="80" placeholder="例如 2.5.0">
+    <small>填写版本不会覆盖资料适用性判定。非空固件范围尚无解析规则时，系统会提示适用性未知。</small>
+    <label for="assistant-question">售后问题</label>
+    <textarea id="assistant-question" name="query" rows="4" maxlength="1000" required placeholder="例如：ACM2 出现 AM2-17，gimbal home sensor 应如何检查？"></textarea>
+    <button type="submit" id="assistant-submit">生成排查建议</button>
+  </form>
+  <p>演示资料均为虚构产品。可选择 AeroCam Mini 2，输入“ACM2 出现 AM2-17，应该如何检查？”；带故障码的问题会显示本次提取的检索输入，其余问题直接使用现有关键词检索。只发送问题、产品／版本和本次可信证据片段到已配置模型。</p>
+</section>
+<section class="panel assistant-panel" aria-labelledby="assistant-result-title" aria-busy="false" id="assistant-result">
+  <h2 id="assistant-result-title">排查结果</h2>
+  <p id="assistant-status" role="status" aria-live="polite">等待提交问题。</p>
+  <div id="assistant-warnings"></div>
+  <ol id="assistant-steps"></ol>
+  <div id="assistant-citations"></div>
+</section>
+<script src="{{ url_for('static', filename='assistant.js') }}" defer></script>
+{% endblock %}

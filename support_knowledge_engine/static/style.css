@@ -213,3 +213,12 @@ legend { padding: 0 8px; color: var(--accent-dark); font-weight: 750; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 }
+:root { --assistant-space: 1rem; }
+.assistant-panel { padding: 1.5rem; }
+.assistant-panel form { display: grid; gap: .75rem; max-width: 52rem; }
+.assistant-panel textarea { width: 100%; box-sizing: border-box; font: inherit; padding: .75rem; }
+.assistant-panel li { margin-bottom: var(--assistant-space); white-space: pre-wrap; }
+.assistant-panel article { border-top: 1px solid #dbe2ea; margin-top: 1.5rem; padding-top: 1rem; }
+.assistant-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.assistant-panel p { overflow-wrap: anywhere; }
+.assistant-panel button:disabled { opacity: .65; cursor: wait; }

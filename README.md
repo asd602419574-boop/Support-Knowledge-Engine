@@ -2,6 +2,69 @@
 
 一个仅在本机运行的产品技术支持文档知识治理工具。应用递归扫描 PDF，使用 SHA-256 去重，保守提取元数据，按页保存文本，并通过 SQLite FTS5 提供可追溯到原始文件和页码的全文检索。
 
+## 本分支：Support Knowledge Agent MVP-1
+
+`feat/support-agent-mvp` 从 `11296ac24fed8cd614ca24ce0ddb5c15d030b39d` 增加
+`/assistant` 和 `POST /api/assistant/ask`，复用 Flask/Jinja/CSS、G4 `run_runtime()`、
+G3 证据判定和原 PDF 接口。助手请求不修改知识库、Case 或 Workflow，不使用 G9 Agent Loop。
+
+安装上述环境要求所需的依赖并运行虚构演示资料（PowerShell，仓库根目录）：
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe scripts/seed_governance_demo.py --database instance/assistant-demo.db
+$env:SUPPORT_KE_DATABASE = Join-Path (Get-Location) 'instance\assistant-demo.db'
+$env:SUPPORT_KE_LLM_BASE_URL = 'https://你的服务地址/v1'
+$env:SUPPORT_KE_LLM_MODEL = '你的模型名称'
+$env:SUPPORT_KE_LLM_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host '模型 API Key' -AsSecureString)).Password
+.\.venv\Scripts\python.exe run.py
+```
+
+打开 <http://127.0.0.1:5000/assistant>。不配置三个模型变量也可启动，页面会明确显示缺少配置，
+不会产生假模型回答。配置后需重启服务，页面“已配置”只表示参数存在，不代表连接已验证。
+Base URL 应指向 API 前缀，应用追加 `/chat/completions`；远端要求 HTTPS，本机模型可用回环 HTTP。
+只有受信任的有效 `supported` 证据才会触发一次模型调用，无自动重试。
+
+兼容适配层默认使用 `max_tokens=1600`；若模型要求 `max_completion_tokens`，启动前设置
+`$env:SUPPORT_KE_LLM_TOKEN_LIMIT_FIELD='max_completion_tokens'`。
+适配层设置 20 秒网络超时、读取过程时间检查、64 KiB 响应上限；浏览器等待最多 45 秒。
+重定向、截断、工具调用、异常 JSON、未知引用或编造正文均拒绝；密钥和原始服务错误不返回页面。
+远端服务可以继续使用当前系统代理，本机回环模型连接直接访问。
+
+首版采用可验证的**原文排查清单**：模型选择和排序可信证据中的完整语句，
+后端校验 Evidence ID 和逐句原文一致性，并生成文档 ID、PDF 名称、页码与哈希绑定链接。
+不自由改写、翻译或补充关键事实。最多发送四份本次支持证据各 1800 字的完整语句，
+不发送整份 PDF、数据库、Case 或运行记录。页面使用 `textContent` 渲染外部内容。
+
+带故障码（例如 AM2-17）的自然语言问题在助手入口提取故障码，并保留问题中的全部已识别产品词；
+页面显示提取后的检索输入，原问题仍用于模型组织答案。不改变底层检索、Evidence ID 或产品治理规则。
+不含故障码的长问句、与资料语言不同的描述可能无法命中，应使用资料中的关键术语；
+证据不足时明确拒绝。非空固件范围按现有 G3 规则保持 `unknown`，不会因为输入版本而升级为适用。
+
+演示问题：选择 AeroCam Mini 2。
+
+- `ACM2 出现 AM2-17，应该如何检查？`：有效证据来自 Service Handbook v3.1 第 3 页。
+- `totally unknown nonexistent fault zzq991`：证据不足。
+- `ACP2 出现 AM2-17，应该如何检查？`：产品不匹配，不调用模型。
+- `ACM2 Service Handbook`：新旧资料同时命中，版本冲突。
+
+问答 API 需要先访问 `/assistant` 取得会话和页面的 `data-csrf`，用同会话发送 JSON：
+`{"query":"ACM2 出现 AM2-17，应该如何检查？","product_id":"1","firmware_version":""}`，
+并附带 `X-Assistant-CSRF` 请求头。产品 ID 应取页面选项，不能假定实际知识库中的 ID。
+响应包括 `status`、独立的 G3 `decision`、`reason_codes`、`model_called`、`warnings`、`steps` 和 `citations`。
+`abstain`/`conflict` 为业务结果（200）；配置缺失为 503；模型超时为 504；服务／输出错误为 502。
+`model_called` 表示已尝试调用，不表示成功。该接口仍用于本地单用户应用。
+
+针对性测试：`.\.venv\Scripts\python.exe -m unittest tests.test_assistant tests.test_assistant_llm -v`。
+完整回归需要开发依赖：`pip install -r requirements-dev.txt`，然后运行
+`python -m unittest discover -s tests -v`。若系统代理不绕过回环地址，仅在测试进程设置
+`$env:NO_PROXY='localhost,127.0.0.1,::1'`，以便原有资料下载测试直接访问本机 HTTP fixture。
+可选浏览器 HTTP fixture：`python -m tests.assistant_browser_fixture`（端口 5052，独立演示数据库）。
+它明确使用 `TEST-FIXTURE-NOT-A-REAL-MODEL`，**不是实际模型调用验收**。
+
+本次执行结果与验收边界见 [MVP-1 交付说明](docs/support-agent/MVP-1.md)。
+
 `v0.3` 稳定主线已经整合 DJI 中国大陆公开资料目录适配、受控资料清单、查询规范化、检索可信状态、84 条虚构评测和 SQLite 备份恢复。所有当前稳定能力均已进入 `main`；`integration/corpus-pilot-dji-catalog` 与 `feat/corpus-pilot` 只作为历史分支保留，不是当前运行入口。
 
 ## 稳定版本与验证基线
@@ -12,7 +75,7 @@
 - `v0.3.0` 合并基线包含 schema migration 3 和 37 项 `unittest`；`0.3.1` 增加 2 项发布元数据、favicon 与迁移路径回归测试，当前完整套件为 39 项，不改变业务能力。
 - 基础虚构评测包含 13 条用例；corpus pilot 虚构评测包含 84 条用例。
 - 厂商公开资料目录导入与受控 JSON 资料清单是两条独立入口，只复用底层校验、去重、解析、治理和检索能力。
-- 当前仍是本地单用户工具，不包含 OCR、向量数据库、向量检索、RAG 或 LLM 自动问答。
+- 稳定主线仍是本地单用户知识工具，不包含 OCR、向量数据库或向量检索；本分支新增的 MVP-1 助手见上文。
 - 仓库中的自动化测试和评测只使用虚构资料；真实资料运行记录不等同于版本化自动测试结果。
 
 ## 当前能力

@@ -181,6 +181,10 @@ def document_file(document_id: int):
     if document is None:
         abort(404)
 
+    expected_sha256 = request.args.get("sha256")
+    if expected_sha256 is not None and expected_sha256 != document["sha256"]:
+        abort(409, "引用的 PDF 版本已变化，请重新提交问题取得当前证据")
+
     file_path = Path(document["file_path"])
     if not file_path.is_file():
         abort(404, "原始 PDF 已移动或删除")

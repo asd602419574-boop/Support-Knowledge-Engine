@@ -13,6 +13,7 @@ from .governance import (
     PRODUCT_STATUS_LABELS,
 )
 from .routes import bp
+from .assistant import bp as assistant_bp
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -24,6 +25,10 @@ def create_app(test_config: dict | None = None) -> Flask:
         OPERATOR_NAME=os.environ.get("SUPPORT_KE_OPERATOR")
         or os.environ.get("USERNAME")
         or "本地维护者",
+        LLM_BASE_URL=os.environ.get("SUPPORT_KE_LLM_BASE_URL", ""),
+        LLM_API_KEY=os.environ.get("SUPPORT_KE_LLM_API_KEY", ""),
+        LLM_MODEL=os.environ.get("SUPPORT_KE_LLM_MODEL", ""),
+        LLM_TOKEN_LIMIT_FIELD=os.environ.get("SUPPORT_KE_LLM_TOKEN_LIMIT_FIELD", "max_tokens"),
     )
 
     if test_config:
@@ -32,6 +37,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     Path(app.instance_path).mkdir(parents=True, exist_ok=True)
     init_database(app.config["DATABASE"])
     app.register_blueprint(bp)
+    app.register_blueprint(assistant_bp)
 
     @app.context_processor
     def governance_labels() -> dict[str, object]:
