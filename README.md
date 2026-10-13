@@ -2,7 +2,30 @@
 
 一个仅在本机运行的产品技术支持文档知识治理工具。应用递归扫描 PDF，使用 SHA-256 去重，保守提取元数据，按页保存文本，并通过 SQLite FTS5 提供可追溯到原始文件和页码的全文检索。
 
-## 本分支：Support Knowledge Agent MVP-1
+## 本分支当前版本：MVP-2 中文故障解释
+
+从 `553cf12f3a1ea9b2cb9281cfa571a56e97f0afd6` 升级为单轮、有原文对照的中文回答。
+保留 Antigravity 页面、复制功能、请求输入快照及 G3/G4 证据链，不新增 Schema、Agent Loop 或维修自动化。
+
+回答分为已知故障信息、建议核查事项、适用限制和尚需补充的信息。中文是 AI 基于资料的释义，
+不是手册原文或现场确诊；每项可展开查看对应完整原文和 PDF 页码。
+“需要检查某部件”作为故障信息展示，不表示部件已经损坏，也不构成拆机、刷机或更换指令。
+只有证据明确给出动作时才显示核查操作；没有操作时明确提示缺少具体检查流程。
+
+模型输出 `items`（`type: fact/action/caution`、中文 `text`、`evidence_id`、完整 `quote`）、
+`coverage: sufficient/partial/none` 及有限的基础信息缺口代码 `missing_information`。
+后端校验精确字段、类型、长度、条数、G3 允许的 Evidence ID 和原文一致性，拒绝自定义来源及工具调用。
+另有有限的标题／动作、否定、条件、故障码和型号检查；这些词法规则**不能证明中文语义完全正确**。
+缺少操作时覆盖度保守降为 partial，具体信息缺口由本地固定提示展示，不接受推测性故障原因。
+API 中 `items` 包含中文内容，`steps` 仅包含 action，`missing_information` 返回中文提示。
+复制内容包含本次已完成请求的输入快照、中文释义、完整原文、PDF 页码和来源链接。
+
+运行方式与模型配置沿用下方命令。DeepSeek 使用 `https://api.deepseek.com` 和 `deepseek-flash`；
+官方目标自动关闭 Thinking 并启用 JSON 模式。Key 仅在用户本机交互输入，不发送到聊天。
+MVP-2 针对性测试：`python -m unittest tests.test_assistant tests.test_assistant_llm tests.test_assistant_explanation -v`。
+交付验证与代表性问题检查见 [MVP-2 交付说明](docs/support-agent/MVP-2.md)。
+
+## MVP-1 历史实现与通用启动方式
 
 `feat/support-agent-mvp` 从 `11296ac24fed8cd614ca24ce0ddb5c15d030b39d` 增加
 `/assistant` 和 `POST /api/assistant/ask`，复用 Flask/Jinja/CSS、G4 `run_runtime()`、

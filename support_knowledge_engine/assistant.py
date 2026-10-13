@@ -19,7 +19,7 @@ from .runtime import RuntimeCompositionError, RuntimeRequest, run_runtime
 
 bp = Blueprint('assistant', __name__)
 MESSAGES = {
-    'answered': '已根据可信 PDF 证据生成排查清单。请结合原文的适用条件核查；这不是现场故障确诊。',
+    'answered': '已生成基于资料的 AI 中文解释。请结合原文适用条件核查；这不是现场故障确诊。',
     'abstain': '证据不足或适用性未确认，无法给出确定性排查结论。请核对型号、版本或补充有效资料。',
     'conflict': '资料存在版本冲突，无法确定应采用哪份排查依据。请先核对有效版本。',
     'not_configured': '模型未配置。',
@@ -44,6 +44,13 @@ REASONS = {
     'ambiguous_product': '产品识别存在歧义。',
     'ambiguous_product_alias': '产品别名存在冲突。',
 }
+MISSING_INFORMATION = {
+    'product_model': '请确认设备铭牌上的完整产品型号。',
+    'symptoms': '请补充实际故障现象、出现时机和完整故障码。',
+    'firmware_version': '请补充设备当前固件版本，核对资料适用条件。',
+    'applicable_document': '请补充适用于该型号、故障和版本的有效资料。',
+    'inspection_procedure': '现有回答尚缺具体检查流程，不能据此执行拆机或维修；请补充适用的检查流程资料。',
+}
 
 
 @bp.get('/assistant')
@@ -59,11 +66,12 @@ def page():
 
 
 def _response(status, decision=None, *, model_called=False, http_status=200, message=None,
-              steps=None, citations=None, warnings=None):
+              steps=None, citations=None, warnings=None, items=None, coverage='none', missing_information=None):
     return jsonify(status=status, decision=decision.decision_type if decision else None,
                    reason_codes=list(decision.reason_codes) if decision else [],
                    model_called=model_called, message=message or MESSAGES.get(status, status),
-                   steps=steps or [], citations=citations or [], warnings=warnings or []), http_status
+                   steps=steps or [], citations=citations or [], warnings=warnings or [],
+                   items=items or [], coverage=coverage, missing_information=missing_information or []), http_status
 
 
 def _excerpts(snapshot):
@@ -78,10 +86,52 @@ def _excerpts(snapshot):
                             'Document Type:', 'Language:', 'Version:', 'Release Date:',
                             'Source URL:', '文档标题：', '产品系列：', '产品型号：', '原始来源网址：')):
             continue
+        if _quote_kind(line) is None:
+            continue
         if sum(map(len, lines)) + len(line) > 1800:
             break
         lines.append(line)
     return lines
+
+
+def _quote_kind(quote):
+    """Conservative lexical categories, not a semantic classifier or proof."""
+    if not re.search(r'[.!?。！？；]$', quote) or quote.startswith((
+            'Support topic:', 'Procedure marker:', 'Synthetic corpus', '支持主题：',
+            '文档标题：', 'This document uses fictional', '本文件为虚构', '虚构测试')):
+        return None
+    if re.search(r'\b(do not|never|not compatible|not applicable|only|supported firmware range)\b', quote, re.I) or re.search(r'不得|不要|禁止|不适用|仅适用|仅限', quote):
+        return 'caution'
+    if re.match(r'^(check|inspect|verify|confirm|run|record|disconnect|connect|repeat|ensure|perform)\b', quote, re.I) or re.match(r'^(请)?(检查|确认|记录|执行|断开|连接|运行)', quote):
+        return 'action'
+    return 'fact'
+
+
+def _basic_translation_guards(quote, text):
+    """Catch obvious loss of labels/conditions; cannot establish semantic accuracy."""
+    labels = re.findall(r'\b[A-Za-z]{2,8}\d{0,3}-\d{2,6}\b|AeroCam (?:Mini|Pro) \d+|\b\d+\.\d+(?:\.[\dx]+)?\b', quote)
+    if any(label.casefold() not in text.casefold() for label in labels):
+        return False
+    rules = ((r'\b(do not|never|not compatible|not applicable)\b|不得|不要|禁止|不适用', r'不要|不得|不应|禁止|不适用|不兼容|不能'),
+             (r'\bonly\b|仅适用|仅限', r'仅|只|限于'),
+             (r'\bafter\b', r'后|之后'), (r'\bbefore\b', r'前|之前'),
+             (r'\b(if|when)\b', r'如果|若|当|时'))
+    if any(re.search(source, quote, re.I) and not re.search(target, text) for source, target in rules):
+        return False
+    # Reject obvious added repair operations even if mislabeled as a fact.
+    # Allow explicit denials, but do not infer permission from a translated sentence.
+    operations = (('拆机', r'disassembl|拆机'), ('刷机', r'flash|刷机'),
+                  ('更换', r'replac|更换'), ('重置', r'reset|重置'),
+                  ('校准', r'calibrat|校准'), ('维修', r'repair|维修'))
+    positive = re.sub(r'(不要|不得|不能|不应|不建议|禁止)[^。；，]{0,24}(拆机|刷机|更换|重置|校准|维修)', '', text)
+    if any(word in positive and not re.search(source, quote, re.I) for word, source in operations):
+        return False
+    if re.search(r'needs? inspection|需要检查', quote, re.I):
+        # Positive damage claims are unsupported; allow explicit denial of diagnosis.
+        cleaned = re.sub(r'(不能|不可|无法|尚不能|并非|不是|未)(据此)?(认定|确定|确诊)?[^。；]{0,12}(损坏|故障)', '', text)
+        if re.search(r'已经?[^。；]{0,6}损坏|确定[^。；]{0,6}损坏|必须更换', cleaned):
+            return False
+    return True
 
 
 def _validate_answer(content, sources):
@@ -89,22 +139,42 @@ def _validate_answer(content, sources):
         value = json.loads(content)
     except (ValueError, TypeError):
         raise ModelError('invalid_answer') from None
-    if not isinstance(value, dict) or set(value) != {'steps'}:
+    if not isinstance(value, dict) or set(value) != {'items', 'coverage', 'missing_information'}:
         raise ModelError('invalid_answer')
-    steps = value['steps']
-    if not isinstance(steps, list) or len(steps) > 6:
+    entries, coverage, missing = value['items'], value['coverage'], value['missing_information']
+    if (not isinstance(entries, list) or len(entries) > 6 or not isinstance(coverage, str)
+            or coverage not in ('sufficient', 'partial', 'none') or not isinstance(missing, list)
+            or len(missing) > 5 or any(not isinstance(code, str) or code not in MISSING_INFORMATION for code in missing)
+            or len(set(missing)) != len(missing)):
         raise ModelError('invalid_answer')
     allowed = {source['evidence_id']: source['excerpts'] for source in sources}
     validated = []
-    for step in steps:
-        if not isinstance(step, dict) or set(step) != {'evidence_id', 'quote'}:
+    for step in entries:
+        if not isinstance(step, dict) or set(step) != {'type', 'text', 'evidence_id', 'quote'}:
             raise ModelError('invalid_answer')
-        evidence_id, quote = step['evidence_id'], step['quote']
+        evidence_id, quote, text, kind = step['evidence_id'], step['quote'], step['text'], step['type']
         if (not isinstance(evidence_id, str) or not isinstance(quote, str)
-                or evidence_id not in allowed or quote not in allowed[evidence_id]):
+                or evidence_id not in allowed or quote not in allowed[evidence_id]
+                or not isinstance(text, str) or not 1 <= len(text.strip()) <= 500
+                or not re.search(r'[\u4e00-\u9fff]', text) or re.search(r'[<>]|https?://|www\.', text, re.I)
+                or kind not in ('fact', 'action', 'caution') or kind != _quote_kind(quote)
+                or not _basic_translation_guards(quote, text)):
             raise ModelError('invalid_answer')
-        validated.append({'text': quote, 'evidence_id': evidence_id})
-    return validated
+        validated.append({'type': kind, 'text': text.strip(), 'quote': quote, 'evidence_id': evidence_id})
+    if not validated:
+        if coverage != 'none':
+            raise ModelError('invalid_answer')
+    elif coverage == 'none':
+        raise ModelError('invalid_answer')
+    elif not any(item['type'] == 'action' for item in validated):
+        coverage = 'partial'
+        if 'inspection_procedure' not in missing:
+            missing = list(dict.fromkeys((*missing[:4], 'inspection_procedure')))
+    if coverage == 'partial' and not missing:
+        missing = ['applicable_document']
+    if validated and missing:
+        coverage = 'partial'
+    return {'items': validated, 'coverage': coverage, 'missing_information': missing}
 
 
 def _runtime_query(db, question):
@@ -171,15 +241,17 @@ def ask():
                'firmware_version': firmware.strip() or None, 'evidence': sources}
     try:
         content = complete_chat(current_app.config, payload)
-        steps = _validate_answer(content, sources)
+        answer = _validate_answer(content, sources)
     except ModelError as exc:
         return _response(exc.code, decision, model_called=True,
                          http_status=504 if exc.code == 'model_timeout' else 502, warnings=warnings)
-    if not steps:
-        return _response('model_abstain', decision, model_called=True, warnings=warnings)
+    items = answer['items']
+    missing = [MISSING_INFORMATION[code] for code in answer['missing_information']]
+    if not items:
+        return _response('model_abstain', decision, model_called=True, warnings=warnings, missing_information=missing)
     # All provenance and links are produced locally, never supplied by the model.
     citations = []
-    for evidence_id in dict.fromkeys(step['evidence_id'] for step in steps):
+    for evidence_id in dict.fromkeys(item['evidence_id'] for item in items):
         e = snapshots[evidence_id]
         citations.append({'evidence_id': evidence_id, 'document_id': e.document_id,
                           'filename': e.filename, 'page_number': e.page_number,
@@ -188,5 +260,7 @@ def ask():
                           'pdf_url': url_for('main.document_file', document_id=e.document_id,
                                              sha256=e.pdf_sha256) + f'#page={e.page_number}',
                           'document_url': url_for('main.document_detail', document_id=e.document_id)})
-    return _response('answered', decision, model_called=True, steps=steps, citations=citations,
-                     warnings=warnings + ['首版使用原文排查清单，保留原文语言，不自由改写关键事实。'])
+    return _response('answered', decision, model_called=True, items=items,
+                     steps=[item for item in items if item['type'] == 'action'],
+                     coverage=answer['coverage'], missing_information=missing, citations=citations,
+                     warnings=warnings + ['中文内容是 AI 基于资料的释义，不是原始手册文字或现场确诊。来源与原文匹配校验不能证明中文语义完全正确，请展开原文对照。'])

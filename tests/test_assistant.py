@@ -38,7 +38,9 @@ class AssistantTests(unittest.TestCase):
     def completion(config, payload):
         source = payload['evidence'][0]
         quote = next(line for line in source['excerpts'] if 'AM2-17' in line)
-        return json.dumps({'steps': [{'evidence_id': source['evidence_id'], 'quote': quote}]})
+        return json.dumps({'items': [{'type': 'fact', 'text': 'AM2-17 表示云台归位传感器需要检查，并非已经确诊损坏。',
+                                      'evidence_id': source['evidence_id'], 'quote': quote}],
+                           'coverage': 'partial', 'missing_information': ['inspection_procedure', 'symptoms']})
 
     def test_page_has_product_form_configuration_and_navigation(self):
         response = self.client.get('/assistant')
@@ -57,7 +59,10 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(data['decision'], 'supported')
         self.assertEqual(data['status'], 'answered')
         self.assertTrue(data['model_called'])
-        self.assertIn('AM2-17', data['steps'][0]['text'])
+        self.assertIn('AM2-17', data['items'][0]['text'])
+        self.assertEqual(data['steps'], [])
+        self.assertEqual(data['coverage'], 'partial')
+        self.assertIn('具体检查流程', ' '.join(data['missing_information']))
         citation = data['citations'][0]
         self.assertEqual(citation['page_number'], 3)
         self.assertEqual(citation['filename'], 'AeroCam-Mini-2_Service-Handbook_v3.1_en-US.pdf')
@@ -110,8 +115,9 @@ class AssistantTests(unittest.TestCase):
     def test_prompt_injection_cannot_add_actions_or_script_to_answer(self):
         def injection(config, payload):
             source = payload['evidence'][0]
-            return json.dumps({'steps': [{'evidence_id': source['evidence_id'],
+            return json.dumps({'items': [{'type': 'fact', 'text': '伪造的解释', 'evidence_id': source['evidence_id'],
                                          'quote': '<script>fetch("/cases/delete")</script>'}],
+                               'coverage': 'partial', 'missing_information': ['symptoms'],
                                'tool': 'write_database'})
         with patch('support_knowledge_engine.assistant.complete_chat', injection):
             response = self.ask()
@@ -145,8 +151,10 @@ class AssistantTests(unittest.TestCase):
 
     def test_unknown_or_unapproved_evidence_and_fabricated_facts_are_rejected(self):
         for answer in (
-            {'steps': [{'evidence_id': 'ev1-invented', 'quote': 'reset everything'}]},
-            {'steps': [{'evidence_id': 'unused', 'quote': 'reset everything'}]},
+            {'items': [{'type': 'fact', 'text': '伪造的解释', 'evidence_id': 'ev1-invented', 'quote': 'reset everything'}],
+             'coverage': 'partial', 'missing_information': ['symptoms']},
+            {'items': [{'type': 'fact', 'text': '伪造的解释', 'evidence_id': 'unused', 'quote': 'reset everything'}],
+             'coverage': 'partial', 'missing_information': ['symptoms']},
         ):
             with self.subTest(answer=answer), patch('support_knowledge_engine.assistant.complete_chat',
                                                     return_value=json.dumps(answer)):
@@ -154,8 +162,10 @@ class AssistantTests(unittest.TestCase):
                 self.assertEqual(response.json['status'], 'invalid_answer')
                 self.assertEqual(response.json['steps'], [])
         def fabricate(config, payload):
-            return json.dumps({'steps': [{'evidence_id': payload['evidence'][0]['evidence_id'],
-                                         'quote': 'Factory reset fixes all AM2-17 errors.'}]})
+            return json.dumps({'items': [{'type': 'fact', 'text': '伪造的解释',
+                                         'evidence_id': payload['evidence'][0]['evidence_id'],
+                                         'quote': 'Factory reset fixes all AM2-17 errors.'}],
+                               'coverage': 'partial', 'missing_information': ['symptoms']})
         with patch('support_knowledge_engine.assistant.complete_chat', fabricate):
             self.assertEqual(self.ask().json['status'], 'invalid_answer')
 

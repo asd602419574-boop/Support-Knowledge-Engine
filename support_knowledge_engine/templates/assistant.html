@@ -6,7 +6,7 @@
   <header class="assistant-hero">
     <div class="assistant-hero-main">
       <div class="assistant-badge-group">
-        <span class="assistant-pill assistant-pill-primary">AI 售后知识助手 · MVP-1</span>
+        <span class="assistant-pill assistant-pill-primary">AI 售后知识助手 · MVP-2</span>
         <span class="assistant-pill assistant-pill-neutral">G3/G4 证据强绑定</span>
       </div>
       <h1 class="assistant-title">AI 售后技术支持助手</h1>
@@ -167,11 +167,20 @@
       <div id="assistant-steps-container" class="assistant-steps-section" style="display: none;">
         <div class="section-subheading">
           <span class="section-subheading-icon">📋</span>
-          <h3>依据文档核查项</h3>
-          <span class="section-subheading-badge">手册原文核验</span>
+          <h3>中文解释与核查引导</h3>
+          <span class="section-subheading-badge">AI 释义 · 原文对照</span>
         </div>
-        <p class="steps-intro">以下内容均选自经 SHA-256 校验的 PDF 证据文档原文：</p>
+        <p class="steps-intro">中文内容是 AI 基于资料的解释，不是手册原文或现场确诊。每项可展开查看对应完整原文。</p>
+        <p id="assistant-coverage" class="steps-intro"></p>
+        <h4>已知故障信息</h4>
+        <div id="assistant-facts" class="assistant-steps-list"></div>
+        <h4>建议核查事项</h4>
+        <p id="assistant-no-actions" class="steps-intro" style="display: none;">现有回答没有可确认的具体操作步骤，请先补充适用的检查流程资料。</p>
         <ol id="assistant-steps" class="assistant-steps-list"></ol>
+        <h4>适用条件和注意事项</h4>
+        <div id="assistant-cautions" class="assistant-steps-list"></div>
+        <h4>尚需补充的信息</h4>
+        <ul id="assistant-missing"></ul>
       </div>
 
       <!-- 证据来源与文档页码追溯区 -->

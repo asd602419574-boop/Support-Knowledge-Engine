@@ -111,10 +111,12 @@ class ModelHTTPTests(unittest.TestCase):
             return complete_chat(config, self.payload)
 
     def test_deepseek_official_parameters_and_existing_evidence_validation(self):
-        self.content = json.dumps({'steps': [{'evidence_id': 'ev1-test', 'quote': 'Inspect the connector.'}]})
+        self.content = json.dumps({'items': [{'type': 'action', 'text': '请检查连接器。',
+                                  'evidence_id': 'ev1-test', 'quote': 'Inspect the connector.'}],
+                                  'coverage': 'partial', 'missing_information': ['symptoms']})
         for base_url in ('https://api.deepseek.com', 'https://api.deepseek.com/v1/'):
             content = self.deepseek_call(base_url)
-            self.assertEqual(_validate_answer(content, self.payload['evidence'])[0]['text'], 'Inspect the connector.')
+            self.assertEqual(_validate_answer(content, self.payload['evidence'])['items'][0]['text'], '请检查连接器。')
             body = self.requests[-1][2]
             self.assertEqual(body['thinking'], {'type': 'disabled'})
             self.assertEqual(body['response_format'], {'type': 'json_object'})
@@ -122,8 +124,12 @@ class ModelHTTPTests(unittest.TestCase):
             self.assertEqual(body['max_tokens'], MAX_OUTPUT_TOKENS)
 
     def test_deepseek_json_mode_does_not_relax_rejection(self):
-        for content in ('not JSON', '{"steps":[{"evidence_id":"fake","quote":"Inspect the connector."}]}',
-                        '{"steps":[{"evidence_id":"ev1-test","quote":"Invented solution."}]}'):
+        for content in ('not JSON', json.dumps({'items': [{'type': 'action', 'text': '检查连接器。',
+                            'evidence_id': 'fake', 'quote': 'Inspect the connector.'}],
+                            'coverage': 'partial', 'missing_information': ['symptoms']}),
+                        json.dumps({'items': [{'type': 'action', 'text': '使用未经证实的维修方法。',
+                            'evidence_id': 'ev1-test', 'quote': 'Invented solution.'}],
+                            'coverage': 'partial', 'missing_information': ['symptoms']})):
             self.content = content
             with self.subTest(content=content), self.assertRaises(ModelError) as ctx:
                 _validate_answer(self.deepseek_call(), self.payload['evidence'])

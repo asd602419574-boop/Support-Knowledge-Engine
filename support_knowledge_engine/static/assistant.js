@@ -9,6 +9,12 @@ const resultPanel = document.getElementById('assistant-result');
 const button = document.getElementById('assistant-submit');
 const stepsContainer = document.getElementById('assistant-steps-container');
 const stepsList = document.getElementById('assistant-steps');
+const factsList = document.getElementById('assistant-facts');
+const cautionsList = document.getElementById('assistant-cautions');
+const missingList = document.getElementById('assistant-missing');
+const coverageText = document.getElementById('assistant-coverage');
+const noActionsText = document.getElementById('assistant-no-actions');
+const itemLabels = {fact: '已知故障信息', action: '建议核查事项', caution: '适用条件和注意事项'};
 const warningsList = document.getElementById('assistant-warnings');
 const citationsContainer = document.getElementById('assistant-citations-container');
 const citationsList = document.getElementById('assistant-citations');
@@ -82,22 +88,27 @@ if (copyButton) {
     if (req.query) text += '故障现象：' + req.query + '\n';
     text += '判定状态：' + (currentQueryResult.decision || '未知') + '\n\n';
 
-    text += '依据文档核查项：\n';
-    const steps = currentQueryResult.steps || [];
-    steps.forEach((step, idx) => {
+    text += '中文内容为 AI 释义，不是手册原文或现场确诊。\n';
+    text += '资料覆盖度（模型评估）：' + (currentQueryResult.coverage || 'none') + '\n\n';
+    const items = currentQueryResult.items || [];
+    items.forEach((step, idx) => {
       const cit = (currentQueryResult.citations || []).find((c) => c.evidence_id === step.evidence_id);
       const ref = cit ? '（参考：' + cit.filename + ' 第 ' + cit.page_number + ' 页）' : '';
-      text += (idx + 1) + '. ' + step.text + ' ' + ref + '\n';
+      text += '【' + itemLabels[step.type] + '】' + step.text + ' ' + ref + '\n';
+      text += '对应手册原文：' + step.quote + '\n';
     });
+    if (!(currentQueryResult.steps || []).length) text += '\n现有回答没有可确认的具体操作步骤。\n';
+    text += '\n尚需补充的信息：\n' + (currentQueryResult.missing_information || []).join('\n') + '\n';
 
     if (currentQueryResult.citations && currentQueryResult.citations.length > 0) {
       text += '\n证据来源文档：\n';
       currentQueryResult.citations.forEach((c, idx) => {
         text += '[' + (idx + 1) + '] ' + c.filename + '（第 ' + c.page_number + ' 页）\n';
+        text += 'PDF：' + new URL(c.pdf_url, window.location.origin).href + '\nEvidence ID：' + c.evidence_id + '\n';
       });
     }
 
-    text += '\n说明：本建议选自已导入并校验的 PDF 证据文档，请结合实机测试条件按需核查。';
+    text += '\n说明：来源和引用匹配校验不能证明中文语义完全正确，请核对原文条件和限制。';
 
     try {
       await navigator.clipboard.writeText(text);
@@ -143,6 +154,9 @@ form.addEventListener('submit', async (event) => {
   if (resultActions) resultActions.style.display = 'none';
 
   stepsList.replaceChildren();
+  factsList.replaceChildren();
+  cautionsList.replaceChildren();
+  missingList.replaceChildren();
   warningsList.replaceChildren();
   citationsList.replaceChildren();
 
@@ -177,7 +191,7 @@ form.addEventListener('submit', async (event) => {
       setStatusBanner(
         'success',
         mainTitle,
-        '已基于 ' + citCount + ' 项校验通过的 PDF 证据引用生成可溯源排查建议。',
+        '已基于 ' + citCount + ' 项 PDF 证据生成中文解释，来源匹配已核验；中文语义请与原文对照。',
         '✅'
       );
     } else if (data.decision === 'abstain' || data.status === 'abstain') {
@@ -212,7 +226,7 @@ form.addEventListener('submit', async (event) => {
         const header = node('div', '', alertDiv, 'alert-card-header');
         node('span', '🔍 检索查询解析', header, 'alert-card-tag');
         node('p', warning, alertDiv, 'alert-card-text');
-      } else if (warning.includes('首版使用原文排查清单') || warning.includes('这不是现场故障确诊')) {
+      } else if (warning.includes('AI 基于资料的释义') || warning.includes('这不是现场故障确诊')) {
         alertDiv.classList.add('alert-governance');
         const header = node('div', '', alertDiv, 'alert-card-header');
         node('span', '🛡️ 治理与免责准则', header, 'alert-card-tag');
@@ -226,22 +240,34 @@ form.addEventListener('submit', async (event) => {
     }
 
     // 渲染排查步骤 (Steps)
-    const steps = data.steps || [];
-    if (steps.length > 0) {
+    const items = data.items || [];
+    const missing = data.missing_information || [];
+    if (items.length > 0 || missing.length > 0) {
       if (stepsContainer) stepsContainer.style.display = 'block';
       if (resultActions) resultActions.style.display = 'block';
 
-      steps.forEach((step, idx) => {
-        const li = node('li', '', stepsList, 'assistant-step-card');
+      coverageText.textContent = ({partial: '资料覆盖度：部分覆盖，尚缺处理条件或具体流程。',
+        sufficient: '资料覆盖度：模型认为可支持所问核查事项，仍不代表确诊或完整维修方案。',
+        none: '资料覆盖度：没有可用解释。'})[data.coverage || 'none'];
+      noActionsText.style.display = (data.steps || []).length ? 'none' : 'block';
+      missing.forEach((info) => node('li', info, missingList));
+      if (!missing.length) node('li', '模型未列出其他基础信息缺口；如需实际维修，仍须核对完整适用流程。', missingList);
+      let actionIndex = 0;
+      items.forEach((step) => {
+        const target = step.type === 'action' ? stepsList : step.type === 'caution' ? cautionsList : factsList;
+        const li = node(step.type === 'action' ? 'li' : 'article', '', target, 'assistant-step-card');
         const badgeCol = node('div', '', li, 'step-badge-col');
-        const numText = (idx + 1) < 10 ? '0' + (idx + 1) : '' + (idx + 1);
+        const numText = step.type === 'action' ? String(++actionIndex).padStart(2, '0') : step.type === 'fact' ? '知' : '注';
         node('span', numText, badgeCol, 'step-number-badge');
 
         const bodyCol = node('div', '', li, 'step-body-col');
         const tag = node('div', '', bodyCol, 'step-tag-row');
-        node('span', '手册原文依据', tag, 'step-tag');
+        node('span', 'AI 中文释义 · ' + itemLabels[step.type], tag, 'step-tag');
 
         node('p', step.text, bodyCol, 'step-text');
+        const comparison = node('details', '', bodyCol, 'citation-details');
+        node('summary', '对照本项手册原文（引用匹配已核验）', comparison);
+        node('pre', step.quote, comparison, 'citation-pre');
 
         // 查找对应 Citation
         const citIndex = (data.citations || []).findIndex((c) => c.evidence_id === step.evidence_id);
@@ -253,6 +279,8 @@ form.addEventListener('submit', async (event) => {
           link.title = '跳转至证据卡片';
         }
       });
+      if (!factsList.children.length) node('p', '本次回答未提供故障含义说明，请补充适用资料并对照原文。', factsList, 'steps-intro');
+      if (!cautionsList.children.length) node('p', '本次回答未列出注意事项；仍需核对原文完整条件。', cautionsList, 'steps-intro');
     } else {
       if (stepsContainer) stepsContainer.style.display = 'none';
       if (resultActions) resultActions.style.display = 'none';
