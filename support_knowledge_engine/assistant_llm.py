@@ -47,8 +47,9 @@ Do not return any other fields, commentary, Markdown, HTML or tool calls.'''
 
 
 class ModelError(Exception):
-    def __init__(self, code: str):
+    def __init__(self, code: str, validation_reason: str | None = None):
         self.code = code
+        self.validation_reason = validation_reason
         super().__init__(code)
 
 
@@ -116,16 +117,19 @@ def complete_chat(config: Mapping, payload: dict) -> str:
                     break
                 data.extend(chunk)
                 if len(data) > MAX_RESPONSE_BYTES:
-                    raise ModelError('invalid_answer')
+                    raise ModelError('invalid_answer', 'response_limit')
         envelope = json.loads(data)
         choice = envelope['choices'][0]
         message = choice['message']
-        if (choice.get('finish_reason') != 'stop' or message.get('tool_calls')
-                or message.get('function_call') or message.get('refusal')):
-            raise ModelError('invalid_answer')
+        if choice.get('finish_reason') == 'length':
+            raise ModelError('invalid_answer', 'response_truncated')
+        if choice.get('finish_reason') != 'stop':
+            raise ModelError('invalid_answer', 'finish_reason')
+        if message.get('tool_calls') or message.get('function_call') or message.get('refusal'):
+            raise ModelError('invalid_answer', 'response_unusable')
         content = message['content']
         if not isinstance(content, str) or len(content) > 12000:
-            raise ModelError('invalid_answer')
+            raise ModelError('invalid_answer', 'response_limit')
         return content
     except (socket.timeout, TimeoutError):
         raise ModelError('model_timeout') from None
@@ -139,5 +143,7 @@ def complete_chat(config: Mapping, payload: dict) -> str:
         raise ModelError(code) from None
     except OSError:
         raise ModelError('model_unavailable') from None
+    except json.JSONDecodeError:
+        raise ModelError('invalid_answer', 'response_json') from None
     except (ValueError, KeyError, IndexError, TypeError):
-        raise ModelError('invalid_answer') from None
+        raise ModelError('invalid_answer', 'response_schema') from None

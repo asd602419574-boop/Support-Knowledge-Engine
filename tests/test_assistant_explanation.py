@@ -31,6 +31,17 @@ class ExplanationTests(unittest.TestCase):
         self.assertIn('inspection_procedure', result['missing_information'])
         self.assertEqual(result['items'][0]['quote'], FACT)
 
+    def test_damage_denial_is_not_mistaken_for_a_confirmed_damage_claim(self):
+        for text in ('AM2-17 表示云台归位传感器需要检查，但不代表该传感器已经损坏。',
+                     'AM2-17 提示检查云台归位传感器，并不意味着它已经损坏。'):
+            with self.subTest(text=text):
+                result = _validate_answer(explanation(text=text), self.sources)
+                self.assertEqual(result['items'][0]['text'], text)
+        with self.assertRaises(ModelError):
+            _validate_answer(explanation(text='AM2-17 表示云台归位传感器已经损坏。'), self.sources)
+        with self.assertRaises(ModelError):
+            _validate_answer(explanation(text='AM2-17 不代表它已经损坏，但该传感器已经损坏。'), self.sources)
+
     def test_metadata_and_diagnostic_meaning_cannot_masquerade_as_actions(self):
         for quote in (FACT, 'Firmware diagnostics', 'Supported firmware range: 2.4.0 through 2.9.x.'):
             with self.subTest(quote=quote), self.assertRaises(ModelError):
@@ -62,6 +73,19 @@ class ExplanationTests(unittest.TestCase):
         ):
             with self.subTest(answer=answer), self.assertRaises(ModelError):
                 _validate_answer(answer, self.sources)
+
+    def test_diagnostics_distinguish_evidence_quote_schema_and_lexical_failures(self):
+        cases = [
+            (explanation(items=[{'type':'fact','text':'AM2-17 需要检查传感器。','quote':FACT,'evidence_id':'fake'}]), 'evidence_invalid'),
+            (explanation(quote=FACT[:-1]), 'quote_mismatch'),
+            (explanation(source_url='https://invented.example'), 'answer_schema'),
+            ('not JSON', 'answer_json'),
+            (explanation(text='AM2-17 表示传感器已经损坏。'), 'damage_claim'),
+        ]
+        for answer, reason in cases:
+            with self.subTest(reason=reason), self.assertRaises(ModelError) as ctx:
+                _validate_answer(answer, self.sources)
+            self.assertEqual(ctx.exception.validation_reason, reason)
 
 
 if __name__ == '__main__':

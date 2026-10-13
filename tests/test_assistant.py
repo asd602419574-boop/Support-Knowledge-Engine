@@ -191,6 +191,29 @@ class AssistantTests(unittest.TestCase):
                 self.assertNotIn('test-only', response.text)
                 self.assertNotEqual(response.json['message'], code)
 
+    def test_validation_diagnostics_stay_internal_and_do_not_expose_content(self):
+        def wrong_type(config, payload):
+            answer = json.loads(self.completion(config, payload))
+            answer['items'][0]['type'] = 'action'
+            return json.dumps(answer)
+        with (patch('support_knowledge_engine.assistant.complete_chat', wrong_type),
+              self.assertLogs('support_knowledge_engine.assistant', level='WARNING') as logs):
+            response = self.ask()
+        self.assertIn('category=item_type', logs.output[0])
+        self.assertIn('content_length=', logs.output[0])
+        self.assertNotIn('validation_reason', response.json)
+        self.assertFalse(any('故障说明不能作为操作步骤' in warning for warning in response.json['warnings']))
+        from support_knowledge_engine.assistant_llm import ModelError
+        with (patch('support_knowledge_engine.assistant.complete_chat',
+                    side_effect=ModelError('invalid_answer', 'private-provider-content')),
+              self.assertLogs('support_knowledge_engine.assistant', level='WARNING') as logs):
+            response = self.ask()
+        self.assertIn('category=unknown', logs.output[0])
+        self.assertNotIn('private-provider-content', ''.join(logs.output))
+        self.assertNotIn('test-only', ''.join(logs.output))
+        self.assertNotIn('validation_reason', response.json)
+        self.assertNotIn('private-provider-content', response.text)
+
 
 if __name__ == '__main__':
     unittest.main()

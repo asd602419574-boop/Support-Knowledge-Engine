@@ -44,6 +44,8 @@ class ModelHTTPTests(unittest.TestCase):
                     choice['message']['tool_calls'] = [{'function': {'name': 'write_database'}}]
                 if test.mode == 'truncated':
                     choice['finish_reason'] = 'length'
+                if test.mode == 'non_stop':
+                    choice['finish_reason'] = 'content_filter'
                 data = json.dumps({'choices': [choice]}).encode()
                 if test.mode == 'oversize':
                     data = b'x' * (MAX_RESPONSE_BYTES + 1)
@@ -158,11 +160,14 @@ class ModelHTTPTests(unittest.TestCase):
             self.assertNotIn(self.config['LLM_API_KEY'], str(ctx.exception))
 
     def test_redirect_does_not_forward_credentials_and_invalid_responses_rejected(self):
-        for mode in ('redirect', 'tool', 'truncated', 'oversize', 'malformed'):
+        for mode in ('redirect', 'tool', 'truncated', 'non_stop', 'oversize', 'malformed'):
             self.mode = mode
             with self.subTest(mode=mode), self.assertRaises(ModelError) as ctx:
                 complete_chat(self.config, self.payload)
             self.assertEqual(ctx.exception.code, 'model_unavailable' if mode == 'redirect' else 'invalid_answer')
+            if mode in ('truncated', 'non_stop', 'malformed'):
+                self.assertEqual(ctx.exception.validation_reason, {
+                    'truncated': 'response_truncated', 'non_stop': 'finish_reason', 'malformed': 'response_json'}[mode])
         self.assertTrue(all(path == '/v1/chat/completions' for path, _, _ in self.requests))
 
     def test_configuration_does_not_claim_connection_and_requires_tls(self):

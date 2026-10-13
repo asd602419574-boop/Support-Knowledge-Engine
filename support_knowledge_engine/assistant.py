@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import re
 import secrets
 import sqlite3
@@ -18,6 +19,7 @@ from .runtime import RuntimeCompositionError, RuntimeRequest, run_runtime
 
 
 bp = Blueprint('assistant', __name__)
+logger = logging.getLogger(__name__)
 MESSAGES = {
     'answered': '已生成基于资料的 AI 中文解释。请结合原文适用条件核查；这不是现场故障确诊。',
     'abstain': '证据不足或适用性未确认，无法给出确定性排查结论。请核对型号、版本或补充有效资料。',
@@ -50,6 +52,26 @@ MISSING_INFORMATION = {
     'firmware_version': '请补充设备当前固件版本，核对资料适用条件。',
     'applicable_document': '请补充适用于该型号、故障和版本的有效资料。',
     'inspection_procedure': '现有回答尚缺具体检查流程，不能据此执行拆机或维修；请补充适用的检查流程资料。',
+}
+VALIDATION_MESSAGES = {
+    'response_limit': '模型响应超过长度限制。',
+    'response_truncated': '模型输出被截断，未取得完整回答。',
+    'response_unusable': '模型没有返回可用的普通文本回答。',
+    'finish_reason': '模型响应未正常完成。',
+    'response_json': '模型服务响应不是合法 JSON。',
+    'response_schema': '模型服务响应结构或 JSON 无效。',
+    'answer_json': '回答不是合法 JSON。',
+    'answer_schema': '回答字段或结构不符合要求。',
+    'answer_limits': '回答类型、条数、长度或基础信息代码不符合要求。',
+    'evidence_invalid': 'Evidence ID 不属于本次允许证据。',
+    'quote_mismatch': '引用的完整原文与本次允许摘录不一致。',
+    'text_invalid': '中文释义格式或长度不符合要求。',
+    'item_type': '模型内容分类与原文类别不一致；故障说明不能作为操作步骤。',
+    'label_missing': '中文释义遗漏了原文中的故障码、型号或版本。',
+    'condition_missing': '中文释义未保留原文的否定或适用条件。',
+    'operation_added': '中文释义增加了原文没有支持的维修操作。',
+    'damage_claim': '原文只要求检查，中文释义却宣称已经损坏。',
+    'coverage_invalid': '回答内容与覆盖度不一致。',
 }
 
 
@@ -107,17 +129,17 @@ def _quote_kind(quote):
     return 'fact'
 
 
-def _basic_translation_guards(quote, text):
+def _translation_guard_reason(quote, text):
     """Catch obvious loss of labels/conditions; cannot establish semantic accuracy."""
     labels = re.findall(r'\b[A-Za-z]{2,8}\d{0,3}-\d{2,6}\b|AeroCam (?:Mini|Pro) \d+|\b\d+\.\d+(?:\.[\dx]+)?\b', quote)
     if any(label.casefold() not in text.casefold() for label in labels):
-        return False
+        return 'label_missing'
     rules = ((r'\b(do not|never|not compatible|not applicable)\b|不得|不要|禁止|不适用', r'不要|不得|不应|禁止|不适用|不兼容|不能'),
              (r'\bonly\b|仅适用|仅限', r'仅|只|限于'),
              (r'\bafter\b', r'后|之后'), (r'\bbefore\b', r'前|之前'),
              (r'\b(if|when)\b', r'如果|若|当|时'))
     if any(re.search(source, quote, re.I) and not re.search(target, text) for source, target in rules):
-        return False
+        return 'condition_missing'
     # Reject obvious added repair operations even if mislabeled as a fact.
     # Allow explicit denials, but do not infer permission from a translated sentence.
     operations = (('拆机', r'disassembl|拆机'), ('刷机', r'flash|刷机'),
@@ -125,47 +147,59 @@ def _basic_translation_guards(quote, text):
                   ('校准', r'calibrat|校准'), ('维修', r'repair|维修'))
     positive = re.sub(r'(不要|不得|不能|不应|不建议|禁止)[^。；，]{0,24}(拆机|刷机|更换|重置|校准|维修)', '', text)
     if any(word in positive and not re.search(source, quote, re.I) for word, source in operations):
-        return False
+        return 'operation_added'
     if re.search(r'needs? inspection|需要检查', quote, re.I):
         # Positive damage claims are unsupported; allow explicit denial of diagnosis.
-        cleaned = re.sub(r'(不能|不可|无法|尚不能|并非|不是|未)(据此)?(认定|确定|确诊)?[^。；]{0,12}(损坏|故障)', '', text)
+        cleaned = re.sub(r'(不能|不可|无法|尚不能|并非|不是|未|不代表|不意味着|不等于)(据此)?(认定|确定|确诊)?[^。；，]{0,24}?(损坏|故障)', '', text)
         if re.search(r'已经?[^。；]{0,6}损坏|确定[^。；]{0,6}损坏|必须更换', cleaned):
-            return False
-    return True
+            return 'damage_claim'
+    return None
+
+
+def _basic_translation_guards(quote, text):
+    return _translation_guard_reason(quote, text) is None
 
 
 def _validate_answer(content, sources):
     try:
         value = json.loads(content)
     except (ValueError, TypeError):
-        raise ModelError('invalid_answer') from None
+        raise ModelError('invalid_answer', 'answer_json') from None
     if not isinstance(value, dict) or set(value) != {'items', 'coverage', 'missing_information'}:
-        raise ModelError('invalid_answer')
+        raise ModelError('invalid_answer', 'answer_schema')
     entries, coverage, missing = value['items'], value['coverage'], value['missing_information']
     if (not isinstance(entries, list) or len(entries) > 6 or not isinstance(coverage, str)
             or coverage not in ('sufficient', 'partial', 'none') or not isinstance(missing, list)
             or len(missing) > 5 or any(not isinstance(code, str) or code not in MISSING_INFORMATION for code in missing)
             or len(set(missing)) != len(missing)):
-        raise ModelError('invalid_answer')
+        raise ModelError('invalid_answer', 'answer_limits')
     allowed = {source['evidence_id']: source['excerpts'] for source in sources}
     validated = []
     for step in entries:
         if not isinstance(step, dict) or set(step) != {'type', 'text', 'evidence_id', 'quote'}:
-            raise ModelError('invalid_answer')
+            raise ModelError('invalid_answer', 'answer_schema')
         evidence_id, quote, text, kind = step['evidence_id'], step['quote'], step['text'], step['type']
-        if (not isinstance(evidence_id, str) or not isinstance(quote, str)
-                or evidence_id not in allowed or quote not in allowed[evidence_id]
-                or not isinstance(text, str) or not 1 <= len(text.strip()) <= 500
+        if not isinstance(evidence_id, str) or evidence_id not in allowed:
+            raise ModelError('invalid_answer', 'evidence_invalid')
+        if not isinstance(quote, str) or quote not in allowed[evidence_id]:
+            raise ModelError('invalid_answer', 'quote_mismatch')
+        if (not isinstance(text, str) or not 1 <= len(text.strip()) <= 500
                 or not re.search(r'[\u4e00-\u9fff]', text) or re.search(r'[<>]|https?://|www\.', text, re.I)
-                or kind not in ('fact', 'action', 'caution') or kind != _quote_kind(quote)
-                or not _basic_translation_guards(quote, text)):
-            raise ModelError('invalid_answer')
+                ):
+            raise ModelError('invalid_answer', 'text_invalid')
+        if kind not in ('fact', 'action', 'caution'):
+            raise ModelError('invalid_answer', 'answer_schema')
+        if kind != _quote_kind(quote):
+            raise ModelError('invalid_answer', 'item_type')
+        reason = _translation_guard_reason(quote, text)
+        if reason:
+            raise ModelError('invalid_answer', reason)
         validated.append({'type': kind, 'text': text.strip(), 'quote': quote, 'evidence_id': evidence_id})
     if not validated:
         if coverage != 'none':
-            raise ModelError('invalid_answer')
+            raise ModelError('invalid_answer', 'coverage_invalid')
     elif coverage == 'none':
-        raise ModelError('invalid_answer')
+        raise ModelError('invalid_answer', 'coverage_invalid')
     elif not any(item['type'] == 'action' for item in validated):
         coverage = 'partial'
         if 'inspection_procedure' not in missing:
@@ -239,10 +273,16 @@ def ask():
         return _response('model_abstain', decision, warnings=warnings)
     payload = {'question': query.strip(), 'product': product['standard_name'],
                'firmware_version': firmware.strip() or None, 'evidence': sources}
+    content = None
     try:
         content = complete_chat(current_app.config, payload)
         answer = _validate_answer(content, sources)
     except ModelError as exc:
+        reason = exc.validation_reason if exc.validation_reason in VALIDATION_MESSAGES else None
+        if exc.code == 'invalid_answer':
+            # Fixed category and length only. Never log prompt, query, response or key.
+            logger.warning('assistant_validation_failed category=%s content_length=%s',
+                           reason or 'unknown', len(content) if isinstance(content, str) else 'unavailable')
         return _response(exc.code, decision, model_called=True,
                          http_status=504 if exc.code == 'model_timeout' else 502, warnings=warnings)
     items = answer['items']
