@@ -11,7 +11,7 @@
       </div>
       <h1 class="assistant-title">AI 售后技术支持助手</h1>
       <p class="assistant-subtitle">
-        选择产品型号并输入客户故障描述，系统将自动关联已核验的官方技术手册（PDF），基于严格可信证据输出可溯源的排查核查清单。
+        选择产品型号并输入客户故障描述，系统将自动关联已校验的 PDF 技术文档，基于严格可信证据输出可溯源的排查建议。
       </p>
     </div>
 
@@ -20,9 +20,9 @@
         <span class="status-dot"></span>
         <strong class="status-label">
           {% if model_status.configured %}
-            模型已就绪 · {{ llm_model }}
+            已配置，连接状态待验证 · {{ llm_model }}
           {% else %}
-            模型未就绪
+            模型未配置
           {% endif %}
         </strong>
       </div>
@@ -46,7 +46,7 @@
           <span class="eyebrow">故障咨询输入</span>
           <h2 id="assistant-input-title">问题与设备信息</h2>
         </div>
-        <span class="security-chip" title="只将脱敏问题、产品与可信证据片段发送至模型">🔒 安全只读通道</span>
+        <span class="security-chip" title="向已配置的模型服务发送问题、产品型号、固件版本及匹配证据；服务不执行写入">🔒 只读问答通道</span>
       </div>
 
       <form id="assistant-form" data-csrf="{{ csrf_token }}" data-url="{{ url_for('assistant.ask') }}">
@@ -93,16 +93,24 @@
           ></textarea>
         </div>
 
-        <!-- 常用故障快捷填入 -->
+        <!-- 常用故障快捷填入（动态匹配产品数据，不假定 ID 恒为 1） -->
+        {% set acm2_product = namespace(id=none) %}
+        {% for product in products %}
+          {% if product.standard_name == 'AeroCam Mini 2' %}
+            {% set acm2_product.id = product.id %}
+          {% endif %}
+        {% endfor %}
+        {% if acm2_product.id %}
         <div class="quick-examples">
           <span class="quick-examples-label">快捷测试示例：</span>
-          <button type="button" class="example-chip" data-product="1" data-query="ACM2 出现 AM2-17，gimbal home sensor 应如何检查？">
+          <button type="button" class="example-chip" data-product="{{ acm2_product.id }}" data-query="ACM2 出现 AM2-17，gimbal home sensor 应如何检查？">
             ACM2 · AM2-17 云台传感器
           </button>
-          <button type="button" class="example-chip" data-product="1" data-query="ACM2 云台限位传感器异常如何排查？">
+          <button type="button" class="example-chip" data-product="{{ acm2_product.id }}" data-query="ACM2 云台限位传感器异常如何排查？">
             ACM2 · 云台限位排查
           </button>
         </div>
+        {% endif %}
 
         <div class="form-footer">
           <button type="submit" id="assistant-submit" class="button-primary submit-btn">
@@ -110,7 +118,8 @@
             <span class="btn-text">生成排查建议</span>
           </button>
           <p class="form-footer-note">
-            基于 G4 本地检索与 G3 证据判定；证据不足时严格拒答，不生成假冒推断。
+            基于 G4 本地检索与 G3 证据判定；证据不足时严格拒答。<br>
+            提交的问题、产品信息、固件版本及必要证据片段将发送至已配置的模型服务；请避免输入客户个人敏感信息。
           </p>
         </div>
       </form>
@@ -158,10 +167,10 @@
       <div id="assistant-steps-container" class="assistant-steps-section" style="display: none;">
         <div class="section-subheading">
           <span class="section-subheading-icon">📋</span>
-          <h3>官方依据核查项</h3>
+          <h3>依据文档核查项</h3>
           <span class="section-subheading-badge">手册原文核验</span>
         </div>
-        <p class="steps-intro">以下内容均选自经 SHA-256 校验的官方技术手册原文：</p>
+        <p class="steps-intro">以下内容均选自经 SHA-256 校验的 PDF 证据文档原文：</p>
         <ol id="assistant-steps" class="assistant-steps-list"></ol>
       </div>
 

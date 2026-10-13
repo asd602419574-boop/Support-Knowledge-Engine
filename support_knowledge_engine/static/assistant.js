@@ -19,6 +19,7 @@ const copyButton = document.getElementById('assistant-copy-btn');
 const questionInput = document.getElementById('assistant-question');
 const charCountSpan = document.getElementById('assistant-char-count');
 const productSelect = document.getElementById('assistant-product');
+const firmwareInput = document.getElementById('assistant-firmware');
 
 let currentQueryResult = null;
 
@@ -69,21 +70,19 @@ function setStatusBanner(state, titleText, detailText, iconText) {
   if (statusDetail) statusDetail.textContent = detailText;
 }
 
-// 一键复制排查内容
+// 一键复制排查内容（严格绑定本次已完成请求的输入快照，防止读取未提交的新修改）
 if (copyButton) {
   copyButton.addEventListener('click', async () => {
-    if (!currentQueryResult) return;
-    const productName = productSelect && productSelect.selectedIndex >= 0
-      ? productSelect.options[productSelect.selectedIndex].text
-      : '';
-    const query = questionInput ? questionInput.value.trim() : '';
+    if (!currentQueryResult || !currentQueryResult.requestSnapshot) return;
+    const req = currentQueryResult.requestSnapshot;
 
     let text = '【AI 售后排查建议】\n';
-    if (productName) text += '适用产品：' + productName + '\n';
-    if (query) text += '故障现象：' + query + '\n';
+    if (req.productName) text += '适用产品：' + req.productName + '\n';
+    if (req.firmware) text += '固件版本：' + req.firmware + '\n';
+    if (req.query) text += '故障现象：' + req.query + '\n';
     text += '判定状态：' + (currentQueryResult.decision || '未知') + '\n\n';
 
-    text += '官方依据核查项：\n';
+    text += '依据文档核查项：\n';
     const steps = currentQueryResult.steps || [];
     steps.forEach((step, idx) => {
       const cit = (currentQueryResult.citations || []).find((c) => c.evidence_id === step.evidence_id);
@@ -98,7 +97,7 @@ if (copyButton) {
       });
     }
 
-    text += '\n说明：本建议选自已核验官方技术手册，请结合实机测试条件按需核查。';
+    text += '\n说明：本建议选自已导入并校验的 PDF 证据文档，请结合实机测试条件按需核查。';
 
     try {
       await navigator.clipboard.writeText(text);
@@ -120,6 +119,15 @@ form.addEventListener('submit', async (event) => {
   button.disabled = true;
   resultPanel.setAttribute('aria-busy', 'true');
   currentQueryResult = null;
+
+  // 捕获本次提交时的请求输入快照
+  const requestSnapshot = {
+    productName: productSelect && productSelect.selectedIndex >= 0
+      ? productSelect.options[productSelect.selectedIndex].text
+      : '',
+    firmware: firmwareInput ? firmwareInput.value.trim() : '',
+    query: questionInput ? questionInput.value.trim() : '',
+  };
 
   // 切换为检索生成中状态
   setStatusBanner(
@@ -154,7 +162,11 @@ form.addEventListener('submit', async (event) => {
     });
 
     const data = await response.json();
-    currentQueryResult = data;
+    // 将返回结果与本次请求输入快照强绑定
+    currentQueryResult = {
+      ...data,
+      requestSnapshot: requestSnapshot,
+    };
 
     // 根据不同状态设置状态栏
     const decisionSuffix = data.decision ? '（证据判定：' + data.decision + '）' : '';
@@ -165,14 +177,14 @@ form.addEventListener('submit', async (event) => {
       setStatusBanner(
         'success',
         mainTitle,
-        '已基于 ' + citCount + ' 份官方核验 PDF 技术手册生成可溯源排查依据。',
+        '已基于 ' + citCount + ' 项校验通过的 PDF 证据引用生成可溯源排查建议。',
         '✅'
       );
     } else if (data.decision === 'abstain' || data.status === 'abstain') {
       setStatusBanner(
         'warning',
         mainTitle,
-        '官方知识库中未能检索到与当前产品或故障完全对应的可信证据，已触发安全拒答。',
+        '在已导入技术资料中未能检索到与当前产品或故障完全匹配的有效证据，已触发安全拒答。',
         '⚠️'
       );
     } else if (data.decision === 'conflict' || data.status === 'conflict') {
@@ -227,7 +239,7 @@ form.addEventListener('submit', async (event) => {
 
         const bodyCol = node('div', '', li, 'step-body-col');
         const tag = node('div', '', bodyCol, 'step-tag-row');
-        node('span', '官方依据核查项', tag, 'step-tag');
+        node('span', '手册原文依据', tag, 'step-tag');
 
         node('p', step.text, bodyCol, 'step-text');
 
@@ -250,7 +262,7 @@ form.addEventListener('submit', async (event) => {
     const citations = data.citations || [];
     if (citations.length > 0) {
       if (citationsContainer) citationsContainer.style.display = 'block';
-      if (citationCountBadge) citationCountBadge.textContent = citations.length + ' 份官方手册引用';
+      if (citationCountBadge) citationCountBadge.textContent = citations.length + ' 项证据引用';
 
       citations.forEach((citation, index) => {
         const article = node('article', '', citationsList, 'citation-card');
