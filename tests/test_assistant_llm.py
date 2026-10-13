@@ -6,6 +6,9 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
+from urllib.request import ProxyHandler, build_opener
+
+from support_knowledge_engine.assistant import _validate_answer
 
 from support_knowledge_engine.assistant_llm import (
     MAX_OUTPUT_TOKENS, MAX_RESPONSE_BYTES, ModelError, complete_chat, configuration_status,
@@ -17,6 +20,7 @@ class ModelHTTPTests(unittest.TestCase):
         test = self
         self.requests = []
         self.mode = 'success'
+        self.content = '{"steps":[]}'
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
@@ -31,11 +35,11 @@ class ModelHTTPTests(unittest.TestCase):
                     self.send_header('Location', '/credential-leak')
                     self.end_headers()
                     return
-                if test.mode == 'failure':
-                    self.send_response(401)
+                if test.mode in ('failure', '401', '402', '429'):
+                    self.send_response(401 if test.mode == 'failure' else int(test.mode))
                     self.end_headers()
                     return
-                choice = {'finish_reason': 'stop', 'message': {'content': '{"steps":[]}'}}
+                choice = {'finish_reason': 'stop', 'message': {'content': test.content}}
                 if test.mode == 'tool':
                     choice['message']['tool_calls'] = [{'function': {'name': 'write_database'}}]
                 if test.mode == 'truncated':
@@ -74,6 +78,8 @@ class ModelHTTPTests(unittest.TestCase):
         self.assertEqual(body['max_tokens'], MAX_OUTPUT_TOKENS)
         self.assertEqual(json.loads(body['messages'][1]['content']), self.payload)
         self.assertNotIn('tools', body)
+        self.assertNotIn('thinking', body)
+        self.assertNotIn('response_format', body)
         self.assertNotIn('test-only-secret', json.dumps(body))
         self.assertIn('untrusted DATA', body['messages'][0]['content'])
         complete_chat(dict(self.config, LLM_TOKEN_LIMIT_FIELD='max_completion_tokens'), self.payload)
@@ -90,7 +96,60 @@ class ModelHTTPTests(unittest.TestCase):
         self.mode = 'failure'
         with self.assertRaises(ModelError) as ctx:
             complete_chat(self.config, self.payload)
-        self.assertEqual(ctx.exception.code, 'model_unavailable')
+        self.assertEqual(ctx.exception.code, 'model_unauthorized')
+
+    def deepseek_call(self, base_url='https://api.deepseek.com'):
+        test = self
+        local_opener = build_opener(ProxyHandler({}))
+        class OfficialEndpointFixture:
+            def open(self, request, timeout):
+                test.assertEqual(request.full_url, base_url.rstrip('/') + '/chat/completions')
+                request.full_url = test.config['LLM_BASE_URL'] + '/chat/completions'
+                return local_opener.open(request, timeout=timeout)
+        config = dict(self.config, LLM_BASE_URL=base_url, LLM_MODEL='deepseek-flash')
+        with patch('support_knowledge_engine.assistant_llm.build_opener', return_value=OfficialEndpointFixture()):
+            return complete_chat(config, self.payload)
+
+    def test_deepseek_official_parameters_and_existing_evidence_validation(self):
+        self.content = json.dumps({'steps': [{'evidence_id': 'ev1-test', 'quote': 'Inspect the connector.'}]})
+        for base_url in ('https://api.deepseek.com', 'https://api.deepseek.com/v1/'):
+            content = self.deepseek_call(base_url)
+            self.assertEqual(_validate_answer(content, self.payload['evidence'])[0]['text'], 'Inspect the connector.')
+            body = self.requests[-1][2]
+            self.assertEqual(body['thinking'], {'type': 'disabled'})
+            self.assertEqual(body['response_format'], {'type': 'json_object'})
+            self.assertIn('JSON', body['messages'][0]['content'])
+            self.assertEqual(body['max_tokens'], MAX_OUTPUT_TOKENS)
+
+    def test_deepseek_json_mode_does_not_relax_rejection(self):
+        for content in ('not JSON', '{"steps":[{"evidence_id":"fake","quote":"Inspect the connector."}]}',
+                        '{"steps":[{"evidence_id":"ev1-test","quote":"Invented solution."}]}'):
+            self.content = content
+            with self.subTest(content=content), self.assertRaises(ModelError) as ctx:
+                _validate_answer(self.deepseek_call(), self.payload['evidence'])
+            self.assertEqual(ctx.exception.code, 'invalid_answer')
+        self.mode = 'truncated'
+        with self.assertRaises(ModelError) as ctx:
+            self.deepseek_call()
+        self.assertEqual(ctx.exception.code, 'invalid_answer')
+
+    def test_deepseek_model_name_does_not_enable_parameters_on_other_targets(self):
+        for url in ('https://proxy.example/v1', 'https://api.deepseek.com.evil.example',
+                    'https://api.deepseek.com:8443', 'https://api.deepseek.com/other'):
+            with self.subTest(url=url):
+                self.deepseek_call(url)
+                body = self.requests[-1][2]
+                self.assertNotIn('thinking', body)
+                self.assertNotIn('response_format', body)
+
+    def test_http_error_codes_are_safe_and_actionable(self):
+        for status, expected in (('401', 'model_unauthorized'), ('402', 'model_payment_required'),
+                                 ('429', 'model_rate_limited')):
+            self.mode = status
+            with self.subTest(status=status), self.assertRaises(ModelError) as ctx:
+                self.deepseek_call()
+            self.assertEqual(ctx.exception.code, expected)
+            self.assertNotIn(self.config['LLM_API_KEY'], str(ctx.exception))
 
     def test_redirect_does_not_forward_credentials_and_invalid_responses_rejected(self):
         for mode in ('redirect', 'tool', 'truncated', 'oversize', 'malformed'):

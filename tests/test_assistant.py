@@ -169,7 +169,8 @@ class AssistantTests(unittest.TestCase):
 
     def test_service_failures_do_not_fake_success(self):
         from support_knowledge_engine.assistant_llm import ModelError
-        for code in ('model_timeout', 'model_unavailable'):
+        for code in ('model_timeout', 'model_unavailable', 'model_unauthorized',
+                     'model_payment_required', 'model_rate_limited'):
             with self.subTest(code=code), patch('support_knowledge_engine.assistant.complete_chat',
                                                side_effect=ModelError(code)):
                 response = self.ask()
@@ -177,6 +178,8 @@ class AssistantTests(unittest.TestCase):
                 self.assertEqual(response.json['status'], code)
                 self.assertEqual(response.json['steps'], [])
                 self.assertEqual(response.json['decision'], 'supported')
+                self.assertNotIn('test-only', response.text)
+                self.assertNotEqual(response.json['message'], code)
 
 
 if __name__ == '__main__':

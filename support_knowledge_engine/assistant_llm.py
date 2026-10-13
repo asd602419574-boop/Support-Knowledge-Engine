@@ -72,7 +72,13 @@ def complete_chat(config: Mapping, payload: dict) -> str:
             config.get('LLM_TOKEN_LIMIT_FIELD', 'max_tokens'): MAX_OUTPUT_TOKENS,
             'messages': [{'role': 'system', 'content': SYSTEM_INSTRUCTION},
                          {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]}
-    request = Request(_endpoint(config['LLM_BASE_URL']),
+    endpoint = _endpoint(config['LLM_BASE_URL'])
+    target = urlsplit(endpoint)
+    if (target.scheme == 'https' and target.netloc.lower() in ('api.deepseek.com', 'api.deepseek.com:443')
+            and target.path in ('/chat/completions', '/v1/chat/completions')):
+        body['thinking'] = {'type': 'disabled'}
+        body['response_format'] = {'type': 'json_object'}
+    request = Request(endpoint,
                       data=json.dumps(body, ensure_ascii=False).encode('utf-8'),
                       headers={'Content-Type': 'application/json', 'Accept': 'application/json',
                                'Authorization': 'Bearer ' + config['LLM_API_KEY']}, method='POST')
@@ -104,8 +110,11 @@ def complete_chat(config: Mapping, payload: dict) -> str:
         return content
     except (socket.timeout, TimeoutError):
         raise ModelError('model_timeout') from None
-    except HTTPError:
-        raise ModelError('model_unavailable') from None
+    except HTTPError as exc:
+        code = {401: 'model_unauthorized', 402: 'model_payment_required',
+                429: 'model_rate_limited'}.get(exc.code, 'model_unavailable')
+        exc.close()
+        raise ModelError(code) from None
     except URLError as exc:
         code = 'model_timeout' if isinstance(exc.reason, (socket.timeout, TimeoutError)) else 'model_unavailable'
         raise ModelError(code) from None
