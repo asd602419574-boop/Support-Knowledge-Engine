@@ -1,32 +1,182 @@
 {% extends "base.html" %}
-{% block title %}AI 售后助手 · Support Knowledge Engine{% endblock %}
+{% block title %}AI 售后知识助手 · Support Knowledge Engine{% endblock %}
 {% block content %}
-<section class="panel assistant-panel">
-  <h1>AI 售后助手</h1>
-  <p>选择产品并描述故障，使用已核验的 PDF 证据生成可追溯的排查清单。</p>
-  <p class="alert {{ 'alert-success' if model_status.configured else 'alert-warning' }}" id="model-configuration">{{ model_status.message }}</p>
-  {% if model_status.configured %}<p>目标模型：{{ llm_model }}</p>{% endif %}
-  <form id="assistant-form" data-csrf="{{ csrf_token }}" data-url="{{ url_for('assistant.ask') }}">
-    <label for="assistant-product">产品（必选）</label>
-    <select id="assistant-product" name="product_id" required>
-      <option value="">请选择产品</option>
-      {% for product in products %}<option value="{{ product.id }}">{{ product.standard_name }} · {{ product_status_labels.get(product.status, product.status) }}</option>{% endfor %}
-    </select>
-    <label for="assistant-firmware">固件版本（可选）</label>
-    <input id="assistant-firmware" name="firmware_version" maxlength="80" placeholder="例如 2.5.0">
-    <small>填写版本不会覆盖资料适用性判定。非空固件范围尚无解析规则时，系统会提示适用性未知。</small>
-    <label for="assistant-question">售后问题</label>
-    <textarea id="assistant-question" name="query" rows="4" maxlength="1000" required placeholder="例如：ACM2 出现 AM2-17，gimbal home sensor 应如何检查？"></textarea>
-    <button type="submit" id="assistant-submit">生成排查建议</button>
-  </form>
-  <p>演示资料均为虚构产品。可选择 AeroCam Mini 2，输入“ACM2 出现 AM2-17，应该如何检查？”；带故障码的问题会显示本次提取的检索输入，其余问题直接使用现有关键词检索。只发送问题、产品／版本和本次可信证据片段到已配置模型。</p>
-</section>
-<section class="panel assistant-panel" aria-labelledby="assistant-result-title" aria-busy="false" id="assistant-result">
-  <h2 id="assistant-result-title">排查结果</h2>
-  <p id="assistant-status" role="status" aria-live="polite">等待提交问题。</p>
-  <div id="assistant-warnings"></div>
-  <ol id="assistant-steps"></ol>
-  <div id="assistant-citations"></div>
-</section>
+<div class="assistant-container">
+  <!-- 头部介绍与模型连接状态 -->
+  <header class="assistant-hero">
+    <div class="assistant-hero-main">
+      <div class="assistant-badge-group">
+        <span class="assistant-pill assistant-pill-primary">AI 售后知识助手 · MVP-1</span>
+        <span class="assistant-pill assistant-pill-neutral">G3/G4 证据强绑定</span>
+      </div>
+      <h1 class="assistant-title">AI 售后技术支持助手</h1>
+      <p class="assistant-subtitle">
+        选择产品型号并输入客户故障描述，系统将自动关联已核验的官方技术手册（PDF），基于严格可信证据输出可溯源的排查核查清单。
+      </p>
+    </div>
+
+    <div class="assistant-model-card {{ 'model-ready' if model_status.configured else 'model-warning' }}">
+      <div class="model-status-indicator">
+        <span class="status-dot"></span>
+        <strong class="status-label">
+          {% if model_status.configured %}
+            模型已就绪 · {{ llm_model }}
+          {% else %}
+            模型未就绪
+          {% endif %}
+        </strong>
+      </div>
+      <p class="model-status-desc" id="model-configuration">{{ model_status.message }}</p>
+      {% if model_status.configured %}
+        <div class="model-tag-row">
+          <span class="model-tag">目标模型：{{ llm_model }}</span>
+          <span class="model-tag">单次有界交互</span>
+        </div>
+      {% else %}
+        <div class="model-hint">可在服务环境配置 <code>SUPPORT_KE_LLM_API_KEY</code> 后重启。</div>
+      {% endif %}
+    </div>
+  </header>
+
+  <div class="assistant-grid">
+    <!-- 问题输入区 -->
+    <section class="panel assistant-card assistant-input-card" aria-labelledby="assistant-input-title">
+      <div class="card-header">
+        <div>
+          <span class="eyebrow">故障咨询输入</span>
+          <h2 id="assistant-input-title">问题与设备信息</h2>
+        </div>
+        <span class="security-chip" title="只将脱敏问题、产品与可信证据片段发送至模型">🔒 安全只读通道</span>
+      </div>
+
+      <form id="assistant-form" data-csrf="{{ csrf_token }}" data-url="{{ url_for('assistant.ask') }}">
+        <div class="form-row-grid">
+          <div class="form-group">
+            <label for="assistant-product">
+              适用产品型号 <span class="required-mark" aria-hidden="true">*</span>
+            </label>
+            <div class="select-wrapper">
+              <select id="assistant-product" name="product_id" required>
+                <option value="">请选择产品型号</option>
+                {% for product in products %}
+                  <option value="{{ product.id }}">
+                    {{ product.standard_name }} ({{ product_status_labels.get(product.status, product.status) }})
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="label-with-helper">
+              <label for="assistant-firmware">固件版本（可选）</label>
+              <span class="helper-badge" title="非空固件范围尚无解析规则时，系统保持保守未知判定">保守适用性</span>
+            </div>
+            <input id="assistant-firmware" name="firmware_version" maxlength="80" placeholder="例如 2.5.0（留空则不限版本）">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="label-with-helper">
+            <label for="assistant-question">
+              售后故障描述 / 客户咨询 <span class="required-mark" aria-hidden="true">*</span>
+            </label>
+            <span class="char-count" id="assistant-char-count">0 / 1000 字</span>
+          </div>
+          <textarea
+            id="assistant-question"
+            name="query"
+            rows="4"
+            maxlength="1000"
+            required
+            placeholder="例如：ACM2 出现 AM2-17，gimbal home sensor 应如何检查？"
+          ></textarea>
+        </div>
+
+        <!-- 常用故障快捷填入 -->
+        <div class="quick-examples">
+          <span class="quick-examples-label">快捷测试示例：</span>
+          <button type="button" class="example-chip" data-product="1" data-query="ACM2 出现 AM2-17，gimbal home sensor 应如何检查？">
+            ACM2 · AM2-17 云台传感器
+          </button>
+          <button type="button" class="example-chip" data-product="1" data-query="ACM2 云台限位传感器异常如何排查？">
+            ACM2 · 云台限位排查
+          </button>
+        </div>
+
+        <div class="form-footer">
+          <button type="submit" id="assistant-submit" class="button-primary submit-btn">
+            <span class="btn-icon">⚡</span>
+            <span class="btn-text">生成排查建议</span>
+          </button>
+          <p class="form-footer-note">
+            基于 G4 本地检索与 G3 证据判定；证据不足时严格拒答，不生成假冒推断。
+          </p>
+        </div>
+      </form>
+    </section>
+
+    <!-- 排查结果与追溯区 -->
+    <section class="panel assistant-card assistant-result-card" aria-labelledby="assistant-result-title" aria-busy="false" id="assistant-result">
+      <div class="card-header result-header">
+        <div>
+          <span class="eyebrow">排查依据与结果</span>
+          <h2 id="assistant-result-title">排查结论与证据</h2>
+        </div>
+        <div class="result-actions-top" id="assistant-result-actions" style="display: none;">
+          <button type="button" class="button-secondary button-small" id="assistant-copy-btn" title="复制排查结论与引用">
+            📋 复制排查内容
+          </button>
+        </div>
+      </div>
+
+      <!-- 状态看板 -->
+      <div id="assistant-status-box" class="status-banner status-banner-idle">
+        <div class="status-banner-icon" id="assistant-status-icon">💡</div>
+        <div class="status-banner-body">
+          <p id="assistant-status" class="status-banner-title" role="status" aria-live="polite">
+            等待提交问题。请在左侧选择产品并输入故障描述。
+          </p>
+          <p id="assistant-status-detail" class="status-banner-desc">
+            系统将进行端到端 G4 知识检索并核验 PDF 原文，通过后由大语言模型整理排查依据。
+          </p>
+        </div>
+      </div>
+
+      <!-- 加载骨架屏 -->
+      <div id="assistant-loading-skeleton" class="assistant-skeleton" style="display: none;">
+        <div class="skeleton-line skeleton-title"></div>
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line skeleton-short"></div>
+      </div>
+
+      <!-- 结构化提示、注意事项与检索说明 -->
+      <div id="assistant-warnings" class="assistant-warnings-container"></div>
+
+      <!-- 核心排查建议列表 -->
+      <div id="assistant-steps-container" class="assistant-steps-section" style="display: none;">
+        <div class="section-subheading">
+          <span class="section-subheading-icon">📋</span>
+          <h3>官方依据核查项</h3>
+          <span class="section-subheading-badge">手册原文核验</span>
+        </div>
+        <p class="steps-intro">以下内容均选自经 SHA-256 校验的官方技术手册原文：</p>
+        <ol id="assistant-steps" class="assistant-steps-list"></ol>
+      </div>
+
+      <!-- 证据来源与文档页码追溯区 -->
+      <div id="assistant-citations-container" class="assistant-citations-section" style="display: none;">
+        <div class="section-subheading">
+          <span class="section-subheading-icon">📚</span>
+          <h3>可溯源证据文档</h3>
+          <span class="section-subheading-badge" id="assistant-citation-count">0 项引用</span>
+        </div>
+        <p class="citations-intro">点击可直接在浏览器新标签页打开对应 PDF 并定位至所在页码：</p>
+        <div id="assistant-citations" class="assistant-citations-list"></div>
+      </div>
+    </section>
+  </div>
+</div>
 <script src="{{ url_for('static', filename='assistant.js') }}" defer></script>
 {% endblock %}
