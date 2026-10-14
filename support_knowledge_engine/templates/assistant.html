@@ -2,14 +2,15 @@
 {% block title %}AI 售后知识助手 · Support Knowledge Engine{% endblock %}
 {% block content %}
 <div class="assistant-container">
-  <!-- 头部介绍与模型连接状态 -->
+  <!-- 头部介绍与模型连接状态 (SaaS 现代大厂顶栏) -->
   <header class="assistant-hero">
     <div class="assistant-hero-main">
       <div class="assistant-badge-group">
         <span class="assistant-pill assistant-pill-primary">AI 售后知识助手 · MVP-2</span>
         <span class="assistant-pill assistant-pill-neutral">G3/G4 证据强绑定</span>
+        <span class="assistant-pill assistant-pill-neutral">单次有界交互</span>
       </div>
-      <h1 class="assistant-title">AI 售后技术支持助手</h1>
+      <h1 class="assistant-title">AI 售后技术支持工作台</h1>
       <p class="assistant-subtitle">
         选择产品型号并输入客户故障描述，系统将自动关联已校验的 PDF 技术文档，基于严格可信证据输出可溯源的排查建议。
       </p>
@@ -30,7 +31,7 @@
       {% if model_status.configured %}
         <div class="model-tag-row">
           <span class="model-tag">目标模型：{{ llm_model }}</span>
-          <span class="model-tag">单次有界交互</span>
+          <span class="model-tag">只读问答通道</span>
         </div>
       {% else %}
         <div class="model-hint">可在服务环境配置 <code>SUPPORT_KE_LLM_API_KEY</code> 后重启。</div>
@@ -38,19 +39,201 @@
     </div>
   </header>
 
-  <div class="assistant-grid">
-    <!-- 问题输入区 -->
-    <section class="panel assistant-card assistant-input-card" aria-labelledby="assistant-input-title">
-      <div class="card-header">
-        <div>
-          <span class="eyebrow">故障咨询输入</span>
-          <h2 id="assistant-input-title">问题与设备信息</h2>
+  <!-- 主对话流与结果工作区 (TACP 对话流体验) -->
+  <div class="assistant-feed" id="assistant-feed">
+
+    <!-- 初始欢迎界面 (酷炫智能助手欢迎卡片) -->
+    <section class="assistant-welcome-card" id="assistant-welcome">
+      <div class="welcome-avatar">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
+        </svg>
+      </div>
+      <h2 class="welcome-title">你好，我是 AI 售后知识助手</h2>
+      <p class="welcome-desc">
+        选择产品型号并输入客户故障描述，系统将自动关联已校验的 PDF 技术手册，基于严格可信证据输出可溯源的排查建议。
+      </p>
+
+      <div class="welcome-features-grid">
+        <div class="welcome-feature-item">
+          <div class="feature-icon">📄</div>
+          <div class="feature-content">
+            <strong>本地 PDF 知识库</strong>
+            <span>严格绑定已校验的技术手册与页码，保证真实出处。</span>
+          </div>
         </div>
-        <span class="security-chip" title="向已配置的模型服务发送问题、产品型号、固件版本及匹配证据；服务不执行写入">🔒 只读问答通道</span>
+        <div class="welcome-feature-item">
+          <div class="feature-icon">🛡️</div>
+          <div class="feature-content">
+            <strong>G3/G4 证据强治理</strong>
+            <span>证据不足严格安全拒答，禁止大模型无依据臆测。</span>
+          </div>
+        </div>
+        <div class="welcome-feature-item">
+          <div class="feature-icon">⚡</div>
+          <div class="feature-content">
+            <strong>单轮有界交互</strong>
+            <span>单次独立诊断，不保存多轮上下文，保护排查确定性。</span>
+          </div>
+        </div>
       </div>
 
-      <form id="assistant-form" data-csrf="{{ csrf_token }}" data-url="{{ url_for('assistant.ask') }}">
-        <div class="form-row-grid">
+      <!-- 常用故障快捷填入 -->
+      {% set acm2_product = namespace(id=none) %}
+      {% for product in products %}
+        {% if product.standard_name == 'AeroCam Mini 2' %}
+          {% set acm2_product.id = product.id %}
+        {% endif %}
+      {% endfor %}
+      {% if acm2_product.id %}
+      <div class="welcome-examples-section">
+        <span class="welcome-examples-label">💡 快捷测试示例（点击一键带入产品与问题）：</span>
+        <div class="welcome-examples-chips">
+          <button type="button" class="example-chip" data-product="{{ acm2_product.id }}" data-query="ACM2 出现 AM2-17，gimbal home sensor 应如何检查？">
+            <span class="chip-icon">🎯</span> ACM2 · AM2-17 云台传感器
+          </button>
+          <button type="button" class="example-chip" data-product="{{ acm2_product.id }}" data-query="ACM2 云台限位传感器异常如何排查？">
+            <span class="chip-icon">🔍</span> ACM2 · 云台限位排查
+          </button>
+        </div>
+      </div>
+      {% endif %}
+    </section>
+
+    <!-- 用户提问气泡 (Conversational User Bubble) -->
+    <div class="chat-bubble-user" id="assistant-user-bubble" style="display: none;">
+      <div class="bubble-avatar" aria-hidden="true">👤</div>
+      <div class="bubble-content">
+        <div class="user-meta-row">
+          <span class="user-meta-pill" id="assistant-user-product-tag">📌 适用产品：--</span>
+          <span class="user-meta-pill" id="assistant-user-firmware-tag" style="display: none;">🏷️ 固件版本：--</span>
+          <span class="user-meta-pill user-meta-mode">单轮问答</span>
+        </div>
+        <div class="user-query-text" id="assistant-user-query-text"></div>
+      </div>
+    </div>
+
+    <!-- AI 加载状态气泡 (TACP Pulse Loader) -->
+    <div class="chat-bubble-ai-loading" id="assistant-loading-bubble" style="display: none;">
+      <div class="bubble-avatar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
+        </svg>
+      </div>
+      <div class="loading-content">
+        <div class="loading-pulse"><span></span><span></span><span></span></div>
+        <div class="loading-title">正在检索和核验证据；通过后调用模型，请稍候…</div>
+        <div class="loading-hint">系统正在执行 G4 本地知识检索与 G3 证据可信判定，核验通过后调取大模型生成排查要点。</div>
+      </div>
+    </div>
+
+    <!-- AI 排查结果与可信证据卡片 (AI Response Bubble / Workbench) -->
+    <section class="panel assistant-card assistant-result-card" aria-labelledby="assistant-result-title" aria-busy="false" id="assistant-result" style="display: none;">
+      <div class="card-header result-header">
+        <div class="result-title-group">
+          <div class="result-avatar">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+              <line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+          </div>
+          <div>
+            <h2 id="assistant-result-title">排查结论与证据</h2>
+            <span class="result-sub-badge">DeepSeek 中文释义 · 原文对照</span>
+          </div>
+        </div>
+        <div class="result-actions-top" id="assistant-result-actions" style="display: none;">
+          <button type="button" class="button-secondary button-small" id="assistant-copy-btn" title="复制排查结论与引用">
+            📋 复制排查内容
+          </button>
+        </div>
+      </div>
+
+      <!-- 状态看板 (保留 5 种严格状态反馈) -->
+      <div id="assistant-status-box" class="status-banner status-banner-idle">
+        <div class="status-banner-icon" id="assistant-status-icon">💡</div>
+        <div class="status-banner-body">
+          <p id="assistant-status" class="status-banner-title" role="status" aria-live="polite">
+            等待提交问题。请选择产品并输入故障描述。
+          </p>
+          <p id="assistant-status-detail" class="status-banner-desc">
+            系统将进行端到端 G4 知识检索并核验 PDF 原文，通过后由大语言模型整理排查依据。
+          </p>
+        </div>
+      </div>
+
+      <!-- 加载骨架屏 (保留备用) -->
+      <div id="assistant-loading-skeleton" class="assistant-skeleton" style="display: none;">
+        <div class="skeleton-line skeleton-title"></div>
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line skeleton-short"></div>
+      </div>
+
+      <!-- 结构化提示、注意事项与治理声明 -->
+      <div id="assistant-warnings" class="assistant-warnings-container"></div>
+
+      <!-- 核心排查建议列表 -->
+      <div id="assistant-steps-container" class="assistant-steps-section" style="display: none;">
+        <div class="section-subheading">
+          <span class="section-subheading-icon">📋</span>
+          <h3>中文解释与核查引导</h3>
+          <span class="section-subheading-badge">AI 释义 · 原文对照</span>
+        </div>
+        <p class="steps-intro">中文内容是 AI 基于资料的解释，不是手册原文或现场确诊。每项可展开查看对应完整原文。</p>
+        <p id="assistant-coverage" class="steps-intro"></p>
+        
+        <h4 class="category-title"><span class="cat-pill cat-pill-fact">知</span> 已知故障信息</h4>
+        <div id="assistant-facts" class="assistant-steps-list"></div>
+
+        <h4 class="category-title"><span class="cat-pill cat-pill-action">序</span> 建议核查事项</h4>
+        <p id="assistant-no-actions" class="steps-intro" style="display: none;">现有回答没有可确认的具体操作步骤，请先补充适用的检查流程资料。</p>
+        <ol id="assistant-steps" class="assistant-steps-list"></ol>
+
+        <h4 class="category-title"><span class="cat-pill cat-pill-caution">注</span> 适用条件和注意事项</h4>
+        <div id="assistant-cautions" class="assistant-steps-list"></div>
+
+        <h4 class="category-title"><span class="cat-pill cat-pill-missing">缺</span> 尚需补充的信息</h4>
+        <ul id="assistant-missing" class="missing-info-list"></ul>
+      </div>
+
+      <!-- 证据来源与文档页码追溯区 -->
+      <div id="assistant-citations-container" class="assistant-citations-section" style="display: none;">
+        <div class="section-subheading">
+          <span class="section-subheading-icon">📚</span>
+          <h3>可溯源证据文档</h3>
+          <span class="section-subheading-badge" id="assistant-citation-count">0 项证据引用</span>
+        </div>
+        <p class="citations-intro">点击可直接在浏览器新标签页打开对应 PDF 并定位至所在页码：</p>
+        <div id="assistant-citations" class="assistant-citations-list"></div>
+      </div>
+    </section>
+
+  </div> <!-- /assistant-feed -->
+
+  <!-- 底部固定输入控制台 (TACP 风格悬浮控制台) -->
+  <div class="assistant-input-container">
+    <form id="assistant-form" data-csrf="{{ csrf_token }}" data-url="{{ url_for('assistant.ask') }}">
+      
+      <!-- 可展开上下文抽屉 (Product & Case Context Drawer) -->
+      <div class="context-drawer" id="assistant-context-drawer" style="display: none;">
+        <div class="context-drawer-header">
+          <div class="context-drawer-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+            <strong>关联产品与设备上下文</strong>
+            <span class="context-drawer-hint">（MVP-2 支持产品型号与固件版本）</span>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="assistant-context-close">收起 ✕</button>
+        </div>
+
+        <div class="context-drawer-grid">
           <div class="form-group">
             <label for="assistant-product">
               适用产品型号 <span class="required-mark" aria-hidden="true">*</span>
@@ -76,125 +259,68 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <div class="label-with-helper">
-            <label for="assistant-question">
-              售后故障描述 / 客户咨询 <span class="required-mark" aria-hidden="true">*</span>
-            </label>
-            <span class="char-count" id="assistant-char-count">0 / 1000 字</span>
-          </div>
+        <!-- 案例上下文预留视觉区域 (不引入未实现的 API) -->
+        <div class="context-drawer-reserved">
+          <div class="reserved-badge">未来扩展预留</div>
+          <span class="reserved-text">工单号与案例记录扩展：当前单轮诊断模式下为只读；工单自动关联与合规审查将在后续版本支持。</span>
+        </div>
+      </div>
+
+      <!-- 核心输入卡片栏 (Claude/DeepSeek 风格 Bar) -->
+      <div class="assistant-input-bar">
+        
+        <!-- 上方快速上下文条目 -->
+        <div class="input-bar-context-row">
+          <button type="button" class="context-toggle-btn" id="assistant-context-toggle" title="展开/收起产品与固件设置">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+            <span class="context-status-dot" id="assistant-context-dot"></span>
+            <span class="context-badge-text" id="assistant-product-badge">⚠️ 请选择适用产品型号 *</span>
+            <span class="context-expand-hint">切换型号 ▾</span>
+          </button>
+        </div>
+
+        <!-- 输入文本区 -->
+        <div class="input-textarea-wrapper">
           <textarea
             id="assistant-question"
             name="query"
-            rows="4"
+            rows="1"
             maxlength="1000"
             required
-            placeholder="例如：ACM2 出现 AM2-17，gimbal home sensor 应如何检查？"
+            placeholder="输入客户售后故障描述或故障码，按 Ctrl+Enter 生成排查建议..."
           ></textarea>
         </div>
 
-        <!-- 常用故障快捷填入（动态匹配产品数据，不假定 ID 恒为 1） -->
-        {% set acm2_product = namespace(id=none) %}
-        {% for product in products %}
-          {% if product.standard_name == 'AeroCam Mini 2' %}
-            {% set acm2_product.id = product.id %}
-          {% endif %}
-        {% endfor %}
-        {% if acm2_product.id %}
-        <div class="quick-examples">
-          <span class="quick-examples-label">快捷测试示例：</span>
-          <button type="button" class="example-chip" data-product="{{ acm2_product.id }}" data-query="ACM2 出现 AM2-17，gimbal home sensor 应如何检查？">
-            ACM2 · AM2-17 云台传感器
-          </button>
-          <button type="button" class="example-chip" data-product="{{ acm2_product.id }}" data-query="ACM2 云台限位传感器异常如何排查？">
-            ACM2 · 云台限位排查
-          </button>
-        </div>
-        {% endif %}
+        <!-- 底部控制按钮与安全提示 -->
+        <div class="assistant-bar-actions">
+          <div class="bar-actions-left">
+            <span class="security-chip" title="向已配置的模型服务发送问题、产品型号、固件版本及匹配证据；服务不执行写入">
+              🔒 只读问答通道 · 证据不足安全拒答
+            </span>
+            <span class="char-count" id="assistant-char-count">0 / 1000 字</span>
+          </div>
 
-        <div class="form-footer">
-          <button type="submit" id="assistant-submit" class="button-primary submit-btn">
-            <span class="btn-icon">⚡</span>
-            <span class="btn-text">生成排查建议</span>
-          </button>
-          <p class="form-footer-note">
-            基于 G4 本地检索与 G3 证据判定；证据不足时严格拒答。<br>
-            提交的问题、产品信息、固件版本及必要证据片段将发送至已配置的模型服务；请避免输入客户个人敏感信息。
-          </p>
+          <div class="bar-actions-right">
+            <button type="button" class="btn btn-ghost btn-sm" id="assistant-clear-btn" title="清空当前输入并返回欢迎页">
+              清空
+            </button>
+            <button type="submit" id="assistant-submit" class="chat-send-btn" title="生成排查建议 (Ctrl+Enter)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+              <span>生成排查建议</span>
+            </button>
+          </div>
         </div>
-      </form>
-    </section>
 
-    <!-- 排查结果与追溯区 -->
-    <section class="panel assistant-card assistant-result-card" aria-labelledby="assistant-result-title" aria-busy="false" id="assistant-result">
-      <div class="card-header result-header">
-        <div>
-          <span class="eyebrow">排查依据与结果</span>
-          <h2 id="assistant-result-title">排查结论与证据</h2>
-        </div>
-        <div class="result-actions-top" id="assistant-result-actions" style="display: none;">
-          <button type="button" class="button-secondary button-small" id="assistant-copy-btn" title="复制排查结论与引用">
-            📋 复制排查内容
-          </button>
-        </div>
-      </div>
+      </div> <!-- /assistant-input-bar -->
 
-      <!-- 状态看板 -->
-      <div id="assistant-status-box" class="status-banner status-banner-idle">
-        <div class="status-banner-icon" id="assistant-status-icon">💡</div>
-        <div class="status-banner-body">
-          <p id="assistant-status" class="status-banner-title" role="status" aria-live="polite">
-            等待提交问题。请在左侧选择产品并输入故障描述。
-          </p>
-          <p id="assistant-status-detail" class="status-banner-desc">
-            系统将进行端到端 G4 知识检索并核验 PDF 原文，通过后由大语言模型整理排查依据。
-          </p>
-        </div>
-      </div>
+    </form>
+  </div> <!-- /assistant-input-container -->
 
-      <!-- 加载骨架屏 -->
-      <div id="assistant-loading-skeleton" class="assistant-skeleton" style="display: none;">
-        <div class="skeleton-line skeleton-title"></div>
-        <div class="skeleton-line"></div>
-        <div class="skeleton-line"></div>
-        <div class="skeleton-line skeleton-short"></div>
-      </div>
-
-      <!-- 结构化提示、注意事项与检索说明 -->
-      <div id="assistant-warnings" class="assistant-warnings-container"></div>
-
-      <!-- 核心排查建议列表 -->
-      <div id="assistant-steps-container" class="assistant-steps-section" style="display: none;">
-        <div class="section-subheading">
-          <span class="section-subheading-icon">📋</span>
-          <h3>中文解释与核查引导</h3>
-          <span class="section-subheading-badge">AI 释义 · 原文对照</span>
-        </div>
-        <p class="steps-intro">中文内容是 AI 基于资料的解释，不是手册原文或现场确诊。每项可展开查看对应完整原文。</p>
-        <p id="assistant-coverage" class="steps-intro"></p>
-        <h4>已知故障信息</h4>
-        <div id="assistant-facts" class="assistant-steps-list"></div>
-        <h4>建议核查事项</h4>
-        <p id="assistant-no-actions" class="steps-intro" style="display: none;">现有回答没有可确认的具体操作步骤，请先补充适用的检查流程资料。</p>
-        <ol id="assistant-steps" class="assistant-steps-list"></ol>
-        <h4>适用条件和注意事项</h4>
-        <div id="assistant-cautions" class="assistant-steps-list"></div>
-        <h4>尚需补充的信息</h4>
-        <ul id="assistant-missing"></ul>
-      </div>
-
-      <!-- 证据来源与文档页码追溯区 -->
-      <div id="assistant-citations-container" class="assistant-citations-section" style="display: none;">
-        <div class="section-subheading">
-          <span class="section-subheading-icon">📚</span>
-          <h3>可溯源证据文档</h3>
-          <span class="section-subheading-badge" id="assistant-citation-count">0 项引用</span>
-        </div>
-        <p class="citations-intro">点击可直接在浏览器新标签页打开对应 PDF 并定位至所在页码：</p>
-        <div id="assistant-citations" class="assistant-citations-list"></div>
-      </div>
-    </section>
-  </div>
 </div>
 <script src="{{ url_for('static', filename='assistant.js') }}" defer></script>
 {% endblock %}

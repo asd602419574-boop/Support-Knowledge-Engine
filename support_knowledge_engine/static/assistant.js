@@ -1,5 +1,6 @@
 'use strict';
 
+// 核心 DOM 节点引用
 const form = document.getElementById('assistant-form');
 const statusText = document.getElementById('assistant-status');
 const statusDetail = document.getElementById('assistant-status-detail');
@@ -14,7 +15,7 @@ const cautionsList = document.getElementById('assistant-cautions');
 const missingList = document.getElementById('assistant-missing');
 const coverageText = document.getElementById('assistant-coverage');
 const noActionsText = document.getElementById('assistant-no-actions');
-const itemLabels = {fact: '已知故障信息', action: '建议核查事项', caution: '适用条件和注意事项'};
+const itemLabels = { fact: '已知故障信息', action: '建议核查事项', caution: '适用条件和注意事项' };
 const warningsList = document.getElementById('assistant-warnings');
 const citationsContainer = document.getElementById('assistant-citations-container');
 const citationsList = document.getElementById('assistant-citations');
@@ -27,8 +28,23 @@ const charCountSpan = document.getElementById('assistant-char-count');
 const productSelect = document.getElementById('assistant-product');
 const firmwareInput = document.getElementById('assistant-firmware');
 
+// 对话工作台扩展节点
+const welcomeContainer = document.getElementById('assistant-welcome');
+const userBubble = document.getElementById('assistant-user-bubble');
+const userQueryText = document.getElementById('assistant-user-query-text');
+const userProductTag = document.getElementById('assistant-user-product-tag');
+const userFirmwareTag = document.getElementById('assistant-user-firmware-tag');
+const loadingBubble = document.getElementById('assistant-loading-bubble');
+const contextDrawer = document.getElementById('assistant-context-drawer');
+const contextToggle = document.getElementById('assistant-context-toggle');
+const contextClose = document.getElementById('assistant-context-close');
+const productBadge = document.getElementById('assistant-product-badge');
+const contextDot = document.getElementById('assistant-context-dot');
+const clearButton = document.getElementById('assistant-clear-btn');
+
 let currentQueryResult = null;
 
+// 安全 DOM 节点创建工具（避免不安全 innerHTML 拼接）
 function node(tag, text, parent, className) {
   const element = document.createElement(tag);
   if (text !== undefined && text !== null && text !== '') {
@@ -43,12 +59,72 @@ function node(tag, text, parent, className) {
   return element;
 }
 
-// 字符数计数器
-if (questionInput && charCountSpan) {
+// 字符数计数器与输入框高度自适应
+if (questionInput) {
+  const autoResize = () => {
+    questionInput.style.height = 'auto';
+    questionInput.style.height = Math.min(140, Math.max(42, questionInput.scrollHeight)) + 'px';
+  };
+
   questionInput.addEventListener('input', () => {
     const len = questionInput.value.length;
-    charCountSpan.textContent = len + ' / 1000 字';
+    if (charCountSpan) {
+      charCountSpan.textContent = len + ' / 1000 字';
+    }
+    autoResize();
   });
+
+  // 支持 Ctrl+Enter / Cmd+Enter 快速提交
+  questionInput.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (form) {
+        form.requestSubmit();
+      }
+    }
+  });
+}
+
+// 产品选择变更与胶囊状态同步
+function syncProductBadge() {
+  if (!productSelect || !productBadge) return;
+  const selectedIndex = productSelect.selectedIndex;
+  if (selectedIndex > 0 && productSelect.value) {
+    const text = productSelect.options[selectedIndex].text;
+    productBadge.textContent = '📌 产品: ' + text;
+    if (contextToggle) contextToggle.classList.add('has-product');
+    if (contextDot) contextDot.classList.add('active');
+  } else {
+    productBadge.textContent = '⚠️ 请选择适用产品型号 *';
+    if (contextToggle) contextToggle.classList.remove('has-product');
+    if (contextDot) contextDot.classList.remove('active');
+  }
+}
+
+if (productSelect) {
+  productSelect.addEventListener('change', syncProductBadge);
+  syncProductBadge();
+}
+
+// 上下文抽屉展开/折叠
+function toggleContextDrawer(force) {
+  if (!contextDrawer) return;
+  const isHidden = contextDrawer.style.display === 'none' || !contextDrawer.style.display;
+  const show = force !== undefined ? force : isHidden;
+  contextDrawer.style.display = show ? 'block' : 'none';
+  if (contextToggle) {
+    contextToggle.classList.toggle('active', show);
+  }
+  if (show && productSelect) {
+    productSelect.focus();
+  }
+}
+
+if (contextToggle) {
+  contextToggle.addEventListener('click', () => toggleContextDrawer());
+}
+if (contextClose) {
+  contextClose.addEventListener('click', () => toggleContextDrawer(false));
 }
 
 // 快捷测试示例填入
@@ -58,14 +134,42 @@ document.querySelectorAll('.example-chip').forEach((chip) => {
     const query = chip.dataset.query;
     if (productId && productSelect) {
       productSelect.value = productId;
+      syncProductBadge();
     }
     if (query && questionInput) {
       questionInput.value = query;
       questionInput.dispatchEvent(new Event('input'));
       questionInput.focus();
     }
+    // 已带入产品，收起抽屉
+    toggleContextDrawer(false);
   });
 });
+
+// 清空当前输入并返回欢迎态
+if (clearButton) {
+  clearButton.addEventListener('click', () => {
+    if (questionInput) {
+      questionInput.value = '';
+      questionInput.style.height = 'auto';
+      if (charCountSpan) charCountSpan.textContent = '0 / 1000 字';
+    }
+    if (userBubble) userBubble.style.display = 'none';
+    if (loadingBubble) loadingBubble.style.display = 'none';
+    if (resultPanel) {
+      resultPanel.style.display = 'none';
+      resultPanel.setAttribute('aria-busy', 'false');
+    }
+    if (welcomeContainer) welcomeContainer.style.display = 'block';
+    currentQueryResult = null;
+    setStatusBanner(
+      'idle',
+      '等待提交问题。请选择产品并输入故障描述。',
+      '系统将进行端到端 G4 知识检索并核验 PDF 原文，通过后由大语言模型整理排查依据。',
+      '💡'
+    );
+  });
+}
 
 // 状态横幅模式切换
 function setStatusBanner(state, titleText, detailText, iconText) {
@@ -91,7 +195,7 @@ if (copyButton) {
     text += '中文内容为 AI 释义，不是手册原文或现场确诊。\n';
     text += '资料覆盖度（模型评估）：' + (currentQueryResult.coverage || 'none') + '\n\n';
     const items = currentQueryResult.items || [];
-    items.forEach((step, idx) => {
+    items.forEach((step) => {
       const cit = (currentQueryResult.citations || []).find((c) => c.evidence_id === step.evidence_id);
       const ref = cit ? '（参考：' + cit.filename + ' 第 ' + cit.page_number + ' 页）' : '';
       text += '【' + itemLabels[step.type] + '】' + step.text + ' ' + ref + '\n';
@@ -120,27 +224,79 @@ if (copyButton) {
         copyButton.classList.remove('copy-success');
       }, 2000);
     } catch {
-      alert('复制失败，请手动选择复制。');
+      const oldText = copyButton.textContent;
+      copyButton.textContent = '⚠️ 无法写入剪贴板，请手动选中文本';
+      setTimeout(() => {
+        copyButton.textContent = oldText;
+      }, 2500);
     }
   });
 }
 
+// 表单提交与端到端交互流
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
+
+  // 1. 验证产品选择 (产品为必填项)
+  if (!productSelect || !productSelect.value) {
+    toggleContextDrawer(true);
+    if (productSelect) productSelect.focus();
+    if (productBadge) {
+      productBadge.textContent = '⚠️ 请先选择适用产品型号！';
+      setTimeout(syncProductBadge, 3000);
+    }
+    return;
+  }
+
+  // 2. 验证问题内容
+  const queryText = questionInput ? questionInput.value.trim() : '';
+  if (queryText.length < 2) {
+    if (questionInput) {
+      questionInput.focus();
+      questionInput.placeholder = '⚠️ 请先输入客户故障描述或故障码...';
+    }
+    return;
+  }
+
   button.disabled = true;
-  resultPanel.setAttribute('aria-busy', 'true');
+  if (resultPanel) resultPanel.setAttribute('aria-busy', 'true');
   currentQueryResult = null;
 
   // 捕获本次提交时的请求输入快照
   const requestSnapshot = {
-    productName: productSelect && productSelect.selectedIndex >= 0
+    productName: productSelect.selectedIndex >= 0
       ? productSelect.options[productSelect.selectedIndex].text
       : '',
     firmware: firmwareInput ? firmwareInput.value.trim() : '',
-    query: questionInput ? questionInput.value.trim() : '',
+    query: queryText,
   };
 
-  // 切换为检索生成中状态
+  // 切换界面为对答流形态
+  if (welcomeContainer) welcomeContainer.style.display = 'none';
+
+  // 渲染并显示用户气泡
+  if (userBubble && userQueryText) {
+    if (userProductTag) userProductTag.textContent = '📌 适用产品：' + requestSnapshot.productName;
+    if (userFirmwareTag) {
+      if (requestSnapshot.firmware) {
+        userFirmwareTag.textContent = '🏷️ 固件版本：' + requestSnapshot.firmware;
+        userFirmwareTag.style.display = 'inline-flex';
+      } else {
+        userFirmwareTag.style.display = 'none';
+      }
+    }
+    userQueryText.textContent = requestSnapshot.query;
+    userBubble.style.display = 'flex';
+  }
+
+  // 隐藏旧结果，展示加载中气泡
+  if (resultPanel) resultPanel.style.display = 'none';
+  if (loadingBubble) {
+    loadingBubble.style.display = 'flex';
+    loadingBubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // 切换状态看板为检索生成中状态
   setStatusBanner(
     'loading',
     '正在检索和核验证据；通过后调用模型，请稍候…',
@@ -153,6 +309,7 @@ form.addEventListener('submit', async (event) => {
   if (citationsContainer) citationsContainer.style.display = 'none';
   if (resultActions) resultActions.style.display = 'none';
 
+  // 清空之前的数据
   stepsList.replaceChildren();
   factsList.replaceChildren();
   cautionsList.replaceChildren();
@@ -181,6 +338,13 @@ form.addEventListener('submit', async (event) => {
       ...data,
       requestSnapshot: requestSnapshot,
     };
+
+    // 隐藏 loading 气泡，展现结果面板
+    if (loadingBubble) loadingBubble.style.display = 'none';
+    if (resultPanel) {
+      resultPanel.style.display = 'block';
+      resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
 
     // 根据不同状态设置状态栏
     const decisionSuffix = data.decision ? '（证据判定：' + data.decision + '）' : '';
@@ -246,23 +410,30 @@ form.addEventListener('submit', async (event) => {
       if (stepsContainer) stepsContainer.style.display = 'block';
       if (resultActions) resultActions.style.display = 'block';
 
-      coverageText.textContent = ({partial: '资料覆盖度：部分覆盖，尚缺处理条件或具体流程。',
+      coverageText.textContent = ({
+        partial: '资料覆盖度：部分覆盖，尚缺处理条件或具体流程。',
         sufficient: '资料覆盖度：模型认为可支持所问核查事项，仍不代表确诊或完整维修方案。',
-        none: '资料覆盖度：没有可用解释。'})[data.coverage || 'none'];
+        none: '资料覆盖度：没有可用解释。'
+      })[data.coverage || 'none'];
+
       noActionsText.style.display = (data.steps || []).length ? 'none' : 'block';
       missing.forEach((info) => node('li', info, missingList));
       if (!missing.length) node('li', '模型未列出其他基础信息缺口；如需实际维修，仍须核对完整适用流程。', missingList);
+
       let actionIndex = 0;
       items.forEach((step) => {
         const target = step.type === 'action' ? stepsList : step.type === 'caution' ? cautionsList : factsList;
         const li = node(step.type === 'action' ? 'li' : 'article', '', target, 'assistant-step-card');
         const badgeCol = node('div', '', li, 'step-badge-col');
+        
+        // 关键规则：只给真正的 action 编号，fact 用“知”，caution 用“注”
         const numText = step.type === 'action' ? String(++actionIndex).padStart(2, '0') : step.type === 'fact' ? '知' : '注';
-        node('span', numText, badgeCol, 'step-number-badge');
+        const badgeClass = step.type === 'action' ? 'step-number-badge step-action-badge' : step.type === 'fact' ? 'step-number-badge step-fact-badge' : 'step-number-badge step-caution-badge';
+        node('span', numText, badgeCol, badgeClass);
 
         const bodyCol = node('div', '', li, 'step-body-col');
         const tag = node('div', '', bodyCol, 'step-tag-row');
-        node('span', 'AI 中文释义 · ' + itemLabels[step.type], tag, 'step-tag');
+        node('span', 'AI 中文释义 · ' + itemLabels[step.type], tag, 'step-tag step-tag-' + step.type);
 
         node('p', step.text, bodyCol, 'step-text');
         const comparison = node('details', '', bodyCol, 'citation-details');
@@ -277,8 +448,18 @@ form.addEventListener('submit', async (event) => {
           const link = node('a', '📖 查看引用 [' + (citIndex + 1) + '] · ' + cit.filename + '（第 ' + cit.page_number + ' 页）', metaRow, 'step-citation-anchor');
           link.href = '#assistant-citation-' + citIndex;
           link.title = '跳转至证据卡片';
+          link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetCit = document.getElementById('assistant-citation-' + citIndex);
+            if (targetCit) {
+              targetCit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              targetCit.classList.add('citation-highlight');
+              setTimeout(() => targetCit.classList.remove('citation-highlight'), 1600);
+            }
+          });
         }
       });
+
       if (!factsList.children.length) node('p', '本次回答未提供故障含义说明，请补充适用资料并对照原文。', factsList, 'steps-intro');
       if (!cautionsList.children.length) node('p', '本次回答未列出注意事项；仍需核对原文完整条件。', cautionsList, 'steps-intro');
     } else {
@@ -302,9 +483,9 @@ form.addEventListener('submit', async (event) => {
         node('span', '[' + (index + 1) + ']', titleArea, 'citation-index-tag');
         node('h4', citation.filename, titleArea, 'citation-filename');
 
-        const pageBadge = node('span', '📄 第 ' + citation.page_number + ' 页 (P.' + citation.page_number + ')', topBar, 'citation-page-badge');
+        node('span', '📄 第 ' + citation.page_number + ' 页 (P.' + citation.page_number + ')', topBar, 'citation-page-badge');
 
-        // 操作按钮行：打开 PDF
+        // 操作按钮行：打开 PDF 与元数据
         const actionRow = node('div', '', article, 'citation-actions');
         const pdfLink = node('a', '在浏览器打开 PDF 对应页 ↗', actionRow, 'button-primary button-small pdf-open-btn');
         pdfLink.href = citation.pdf_url;
@@ -318,7 +499,7 @@ form.addEventListener('submit', async (event) => {
           docLink.rel = 'noopener noreferrer';
         }
 
-        // 技术溯源凭据折叠面板 (Evidence ID)
+        // 技术溯源凭据折叠面板 (Evidence ID & SHA-256，默认折叠但不可删除)
         const techDetails = node('details', '', article, 'citation-details citation-tech-details');
         node('summary', '查看技术追溯编号与 SHA-256 (Evidence ID)', techDetails);
         const techGrid = node('div', '', techDetails, 'tech-meta-box');
@@ -331,13 +512,15 @@ form.addEventListener('submit', async (event) => {
         // 本页提取原文折叠面板
         const originalDetails = node('details', '', article, 'citation-details citation-original-details');
         node('summary', '查看本页提取原文片段 (PDF Extract)', originalDetails);
-        const pre = node('pre', citation.original_text, originalDetails, 'citation-pre');
+        node('pre', citation.original_text, originalDetails, 'citation-pre');
       });
     } else {
       if (citationsContainer) citationsContainer.style.display = 'none';
     }
 
   } catch (error) {
+    if (loadingBubble) loadingBubble.style.display = 'none';
+    if (resultPanel) resultPanel.style.display = 'block';
     const errorMsg = error.name === 'AbortError'
       ? '等待服务超时（45秒），未收到可验证回答。请检查模型或稍后重试。'
       : '网络或本地服务请求失败。请确认本地 Web 服务正常运行后重试。';
@@ -345,7 +528,7 @@ form.addEventListener('submit', async (event) => {
   } finally {
     clearTimeout(timeout);
     button.disabled = false;
-    resultPanel.setAttribute('aria-busy', 'false');
+    if (resultPanel) resultPanel.setAttribute('aria-busy', 'false');
     if (skeleton) skeleton.style.display = 'none';
   }
 });
