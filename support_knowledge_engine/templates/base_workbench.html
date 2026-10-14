@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AI 售后知识工作台 · Support Knowledge Engine">
+  <link rel="icon" href="{{ url_for('main.favicon') }}" type="image/svg+xml">
+  <title>{% block title %}AI 售后工作台{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="wb-body">
+  <div class="wb-layout">
+    <!-- Left Sidebar -->
+    <aside class="wb-sidebar" id="wb-sidebar">
+      <div class="wb-sidebar-brand">
+        <a href="{{ url_for('main.index') }}" class="wb-logo-link">
+          <span class="wb-logo-mark">⚡</span>
+          <span class="wb-logo-text">
+            <strong>SKE</strong>
+            <small>售后知识引擎</small>
+          </span>
+        </a>
+      </div>
+
+      <nav class="wb-nav" aria-label="主导航">
+        <a href="{{ url_for('assistant.page') }}" class="wb-nav-item active">
+          <span class="wb-nav-icon">🤖</span>
+          <span>AI 售后助手</span>
+        </a>
+        <a href="{{ url_for('main.index') }}" class="wb-nav-item">
+          <span class="wb-nav-icon">📄</span>
+          <span>文档与检索</span>
+        </a>
+        <a href="{{ url_for('main.products') }}" class="wb-nav-item">
+          <span class="wb-nav-icon">📦</span>
+          <span>产品治理</span>
+        </a>
+        <a href="{{ url_for('main.audit_log') }}" class="wb-nav-item">
+          <span class="wb-nav-icon">📋</span>
+          <span>审计日志</span>
+        </a>
+        <a href="{{ url_for('main.logs') }}" class="wb-nav-item">
+          <span class="wb-nav-icon">📥</span>
+          <span>导入日志</span>
+        </a>
+      </nav>
+
+      <div class="wb-sidebar-footer">
+        {% block sidebar_footer %}{% endblock %}
+        <div class="wb-operator">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span>{{ operator_name }}</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Center Main Area -->
+    <main class="wb-main">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="wb-alerts" aria-live="polite">
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </main>
+
+    <!-- Right Panel -->
+    <aside class="wb-panel" id="wb-panel">
+      {% block panel %}{% endblock %}
+    </aside>
+  </div>
+
+  <!-- Mobile overlay for sidebar -->
+  <div class="wb-overlay" id="wb-overlay"></div>
+
+  <script>
+    // Mobile sidebar toggle
+    (function() {
+      const sidebar = document.getElementById('wb-sidebar');
+      const overlay = document.getElementById('wb-overlay');
+      const toggleBtn = document.getElementById('wb-menu-toggle');
+      const panelToggle = document.getElementById('wb-panel-toggle');
+      const panel = document.getElementById('wb-panel');
+
+      function closeSidebar() {
+        if (sidebar) sidebar.classList.remove('open');
+        if (overlay) overlay.classList.remove('open');
+      }
+
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', function() {
+          sidebar.classList.toggle('open');
+          overlay.classList.toggle('open');
+        });
+      }
+      if (overlay) {
+        overlay.addEventListener('click', closeSidebar);
+      }
+
+      // Mobile panel toggle
+      if (panelToggle && panel) {
+        panelToggle.addEventListener('click', function() {
+          panel.classList.toggle('open');
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

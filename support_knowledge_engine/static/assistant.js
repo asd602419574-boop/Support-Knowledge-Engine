@@ -42,6 +42,13 @@ const productBadge = document.getElementById('assistant-product-badge');
 const contextDot = document.getElementById('assistant-context-dot');
 const clearButton = document.getElementById('assistant-clear-btn');
 
+// 右栏上下文与证据联动节点
+const panelContextProduct = document.getElementById('panel-context-product');
+const panelContextFirmware = document.getElementById('panel-context-firmware');
+const panelCitationsContainer = document.getElementById('assistant-panel-citations');
+const panelEmpty = document.getElementById('assistant-panel-empty');
+const panelCitationCountBadge = document.getElementById('assistant-panel-citation-count');
+
 let currentQueryResult = null;
 
 // 安全 DOM 节点创建工具（避免不安全 innerHTML 拼接）
@@ -63,7 +70,7 @@ function node(tag, text, parent, className) {
 if (questionInput) {
   const autoResize = () => {
     questionInput.style.height = 'auto';
-    questionInput.style.height = Math.min(140, Math.max(42, questionInput.scrollHeight)) + 'px';
+    questionInput.style.height = Math.min(140, Math.max(40, questionInput.scrollHeight)) + 'px';
   };
 
   questionInput.addEventListener('input', () => {
@@ -85,26 +92,39 @@ if (questionInput) {
   });
 }
 
-// 产品选择变更与胶囊状态同步
+// 产品选择变更与胶囊状态及右栏上下文同步
 function syncProductBadge() {
-  if (!productSelect || !productBadge) return;
+  if (!productSelect) return;
   const selectedIndex = productSelect.selectedIndex;
   if (selectedIndex > 0 && productSelect.value) {
     const text = productSelect.options[selectedIndex].text;
-    productBadge.textContent = '📌 产品: ' + text;
+    if (productBadge) productBadge.textContent = '📌 产品: ' + text;
     if (contextToggle) contextToggle.classList.add('has-product');
     if (contextDot) contextDot.classList.add('active');
+    if (panelContextProduct) panelContextProduct.textContent = text;
   } else {
-    productBadge.textContent = '⚠️ 请选择适用产品型号 *';
+    if (productBadge) productBadge.textContent = '⚠️ 请选择适用产品型号 *';
     if (contextToggle) contextToggle.classList.remove('has-product');
     if (contextDot) contextDot.classList.remove('active');
+    if (panelContextProduct) panelContextProduct.textContent = '未指定';
+  }
+
+  if (panelContextFirmware && firmwareInput) {
+    panelContextFirmware.textContent = firmwareInput.value.trim() || '未限定（保守适用）';
   }
 }
 
 if (productSelect) {
   productSelect.addEventListener('change', syncProductBadge);
-  syncProductBadge();
 }
+if (firmwareInput) {
+  firmwareInput.addEventListener('input', () => {
+    if (panelContextFirmware) {
+      panelContextFirmware.textContent = firmwareInput.value.trim() || '未限定（保守适用）';
+    }
+  });
+}
+syncProductBadge();
 
 // 上下文抽屉展开/折叠
 function toggleContextDrawer(force) {
@@ -141,7 +161,6 @@ document.querySelectorAll('.example-chip').forEach((chip) => {
       questionInput.dispatchEvent(new Event('input'));
       questionInput.focus();
     }
-    // 已带入产品，收起抽屉
     toggleContextDrawer(false);
   });
 });
@@ -161,11 +180,20 @@ if (clearButton) {
       resultPanel.setAttribute('aria-busy', 'false');
     }
     if (welcomeContainer) welcomeContainer.style.display = 'block';
+    
+    // 清空右侧面板证据卡片并恢复空态
+    if (panelCitationsContainer) {
+      panelCitationsContainer.replaceChildren();
+      panelCitationsContainer.style.display = 'none';
+    }
+    if (panelEmpty) panelEmpty.style.display = 'block';
+    if (panelCitationCountBadge) panelCitationCountBadge.textContent = '0 项证据';
+
     currentQueryResult = null;
     setStatusBanner(
       'idle',
       '等待提交问题。请选择产品并输入故障描述。',
-      '系统将进行端到端 G4 知识检索并核验 PDF 原文，通过后由大语言模型整理排查依据。',
+      '系统将检索本地已校验的 PDF 技术文档，并通过严格的可信证据判定后由模型整理排查依据。',
       '💡'
     );
   });
@@ -178,6 +206,49 @@ function setStatusBanner(state, titleText, detailText, iconText) {
   if (statusIcon) statusIcon.textContent = iconText;
   if (statusText) statusText.textContent = titleText;
   if (statusDetail) statusDetail.textContent = detailText;
+}
+
+// 渲染单个证据文档卡片 (通用渲染逻辑：支持右栏面板与中栏内联)
+function renderEvidenceCard(citation, index, container, isPanel) {
+  const article = node('article', '', container, isPanel ? 'wb-evidence-card' : 'citation-card');
+  article.id = (isPanel ? 'panel-citation-' : 'assistant-citation-') + index;
+
+  // 卡片头部
+  const topBar = node('div', '', article, isPanel ? 'wb-evidence-header' : 'citation-header');
+  const titleArea = node('div', '', topBar, isPanel ? 'wb-evidence-title-area' : 'citation-title-area');
+  node('span', '[' + (index + 1) + ']', titleArea, isPanel ? 'wb-evidence-index' : 'citation-index-tag');
+  node('h4', citation.filename, titleArea, isPanel ? 'wb-evidence-filename' : 'citation-filename');
+
+  node('span', '📄 第 ' + citation.page_number + ' 页 (P.' + citation.page_number + ')', topBar, isPanel ? 'wb-evidence-page' : 'citation-page-badge');
+
+  // 操作按钮行
+  const actionRow = node('div', '', article, isPanel ? 'wb-evidence-actions' : 'citation-actions');
+  const pdfLink = node('a', '在浏览器打开 PDF 对应页 ↗', actionRow, isPanel ? 'wb-evidence-pdf-btn' : 'button-primary button-small pdf-open-btn');
+  pdfLink.href = citation.pdf_url;
+  pdfLink.target = '_blank';
+  pdfLink.rel = 'noopener noreferrer';
+
+  if (citation.document_url) {
+    const docLink = node('a', '查看文档元数据', actionRow, isPanel ? 'wb-evidence-meta-btn' : 'button-secondary button-small');
+    docLink.href = citation.document_url;
+    docLink.target = '_blank';
+    docLink.rel = 'noopener noreferrer';
+  }
+
+  // 技术溯源凭据折叠面板 (Evidence ID & SHA-256，默认折叠)
+  const techDetails = node('details', '', article, isPanel ? 'wb-evidence-details' : 'citation-details citation-tech-details');
+  node('summary', '查看技术追溯编号与 SHA-256 (Evidence ID)', techDetails);
+  const techGrid = node('div', '', techDetails, isPanel ? 'wb-evidence-tech' : 'tech-meta-box');
+  node('div', '文档内部 ID：' + citation.document_id, techGrid, isPanel ? '' : 'tech-meta-item');
+  node('div', 'Evidence ID：' + citation.evidence_id, techGrid, isPanel ? 'hash-item' : 'tech-meta-item hash-item');
+  if (citation.pdf_sha256) {
+    node('div', 'PDF 文件 SHA-256：' + citation.pdf_sha256, techGrid, isPanel ? 'hash-item' : 'tech-meta-item hash-item');
+  }
+
+  // 本页提取原文折叠面板
+  const originalDetails = node('details', '', article, isPanel ? 'wb-evidence-details' : 'citation-details citation-original-details');
+  node('summary', '查看本页提取原文片段 (PDF Extract)', originalDetails);
+  node('pre', citation.original_text, originalDetails, isPanel ? 'wb-evidence-pre' : 'citation-pre');
 }
 
 // 一键复制排查内容（严格绑定本次已完成请求的输入快照，防止读取未提交的新修改）
@@ -281,6 +352,10 @@ form.addEventListener('submit', async (event) => {
     query: queryText,
   };
 
+  // 同步右栏上下文
+  if (panelContextProduct) panelContextProduct.textContent = requestSnapshot.productName;
+  if (panelContextFirmware) panelContextFirmware.textContent = requestSnapshot.firmware || '未限定（保守适用）';
+
   // 切换界面为对答流形态
   if (welcomeContainer) welcomeContainer.style.display = 'none';
 
@@ -310,7 +385,7 @@ form.addEventListener('submit', async (event) => {
   setStatusBanner(
     'loading',
     '正在检索和核验证据；通过后调用模型，请稍候…',
-    '系统正在执行 G4 本地知识检索与 G3 证据可信判定，如核验通过将调取大模型生成排查要点。',
+    '系统正在执行本地知识检索与可信证据判定，核验通过后调取大模型生成排查要点。',
     '⏳'
   );
 
@@ -326,6 +401,7 @@ form.addEventListener('submit', async (event) => {
   missingList.replaceChildren();
   warningsList.replaceChildren();
   citationsList.replaceChildren();
+  if (panelCitationsContainer) panelCitationsContainer.replaceChildren();
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45000);
@@ -343,19 +419,16 @@ form.addEventListener('submit', async (event) => {
     });
 
     const data = await response.json();
-    // 将返回结果与本次请求输入快照强绑定
     currentQueryResult = {
       ...data,
       requestSnapshot: requestSnapshot,
     };
 
-    // 隐藏 loading 气泡，展现结果面板
     if (loadingBubble) loadingBubble.style.display = 'none';
     if (resultPanel) {
       resultPanel.style.display = 'block';
     }
 
-    // 根据不同状态设置状态栏
     const decisionSuffix = data.decision ? '（证据判定：' + data.decision + '）' : '';
     const mainTitle = (data.message || '处理完成') + decisionSuffix;
 
@@ -382,7 +455,6 @@ form.addEventListener('submit', async (event) => {
         '⚡'
       );
     } else {
-      // 错误或未配置等状态
       setStatusBanner(
         'error',
         mainTitle,
@@ -391,7 +463,7 @@ form.addEventListener('submit', async (event) => {
       );
     }
 
-    // 结构化渲染 Warnings 与说明
+    // 渲染 Warnings 与说明
     for (const warning of data.warnings || []) {
       const alertDiv = node('div', '', warningsList, 'alert-card');
       if (warning.startsWith('已从问题提取故障码')) {
@@ -435,7 +507,6 @@ form.addEventListener('submit', async (event) => {
         const li = node(step.type === 'action' ? 'li' : 'article', '', target, 'assistant-step-card');
         const badgeCol = node('div', '', li, 'step-badge-col');
         
-        // 关键规则：只给真正的 action 编号，fact 用“知”，caution 用“注”
         const numText = step.type === 'action' ? String(++actionIndex).padStart(2, '0') : step.type === 'fact' ? '知' : '注';
         const badgeClass = step.type === 'action' ? 'step-number-badge step-action-badge' : step.type === 'fact' ? 'step-number-badge step-fact-badge' : 'step-number-badge step-caution-badge';
         node('span', numText, badgeCol, badgeClass);
@@ -455,15 +526,26 @@ form.addEventListener('submit', async (event) => {
           const cit = data.citations[citIndex];
           const metaRow = node('div', '', bodyCol, 'step-meta-row');
           const link = node('a', '📖 查看引用 [' + (citIndex + 1) + '] · ' + cit.filename + '（第 ' + cit.page_number + ' 页）', metaRow, 'step-citation-anchor');
-          link.href = '#assistant-citation-' + citIndex;
-          link.title = '跳转至证据卡片';
+          link.href = '#panel-citation-' + citIndex;
+          link.title = '定位至证据详情卡片';
           link.addEventListener('click', (e) => {
             e.preventDefault();
-            const targetCit = document.getElementById('assistant-citation-' + citIndex);
-            if (targetCit) {
-              targetCit.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              targetCit.classList.add('citation-highlight');
-              setTimeout(() => targetCit.classList.remove('citation-highlight'), 1600);
+            const isDesktop = window.innerWidth > 1024;
+            if (isDesktop) {
+              const targetCit = document.getElementById('panel-citation-' + citIndex);
+              if (targetCit) {
+                targetCit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                targetCit.classList.add('wb-evidence-card-highlight');
+                setTimeout(() => targetCit.classList.remove('wb-evidence-card-highlight'), 1600);
+              }
+            } else {
+              // 移动端：定位到内联证据卡片
+              const targetCit = document.getElementById('assistant-citation-' + citIndex);
+              if (targetCit) {
+                targetCit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                targetCit.classList.add('citation-highlight');
+                setTimeout(() => targetCit.classList.remove('citation-highlight'), 1600);
+              }
             }
           });
         }
@@ -476,58 +558,31 @@ form.addEventListener('submit', async (event) => {
       if (resultActions) resultActions.style.display = 'none';
     }
 
-    // 渲染引用 (Citations)
+    // 渲染引用 (Citations)：同时渲染右侧常驻面板与移动端内联容器
     const citations = data.citations || [];
     if (citations.length > 0) {
       if (citationsContainer) citationsContainer.style.display = 'block';
       if (citationCountBadge) citationCountBadge.textContent = citations.length + ' 项证据引用';
+      if (panelCitationCountBadge) panelCitationCountBadge.textContent = citations.length + ' 项证据';
+      if (panelEmpty) panelEmpty.style.display = 'none';
+      if (panelCitationsContainer) panelCitationsContainer.style.display = 'flex';
 
       citations.forEach((citation, index) => {
-        const article = node('article', '', citationsList, 'citation-card');
-        article.id = 'assistant-citation-' + index;
-
-        // 卡片头部：文件名与页码
-        const topBar = node('div', '', article, 'citation-header');
-        const titleArea = node('div', '', topBar, 'citation-title-area');
-        node('span', '[' + (index + 1) + ']', titleArea, 'citation-index-tag');
-        node('h4', citation.filename, titleArea, 'citation-filename');
-
-        node('span', '📄 第 ' + citation.page_number + ' 页 (P.' + citation.page_number + ')', topBar, 'citation-page-badge');
-
-        // 操作按钮行：打开 PDF 与元数据
-        const actionRow = node('div', '', article, 'citation-actions');
-        const pdfLink = node('a', '在浏览器打开 PDF 对应页 ↗', actionRow, 'button-primary button-small pdf-open-btn');
-        pdfLink.href = citation.pdf_url;
-        pdfLink.target = '_blank';
-        pdfLink.rel = 'noopener noreferrer';
-
-        if (citation.document_url) {
-          const docLink = node('a', '查看文档元数据', actionRow, 'button-secondary button-small');
-          docLink.href = citation.document_url;
-          docLink.target = '_blank';
-          docLink.rel = 'noopener noreferrer';
+        // 渲染移动端内联卡片
+        renderEvidenceCard(citation, index, citationsList, false);
+        // 渲染右栏面板卡片
+        if (panelCitationsContainer) {
+          renderEvidenceCard(citation, index, panelCitationsContainer, true);
         }
-
-        // 技术溯源凭据折叠面板 (Evidence ID & SHA-256，默认折叠但不可删除)
-        const techDetails = node('details', '', article, 'citation-details citation-tech-details');
-        node('summary', '查看技术追溯编号与 SHA-256 (Evidence ID)', techDetails);
-        const techGrid = node('div', '', techDetails, 'tech-meta-box');
-        node('div', '文档内部 ID：' + citation.document_id, techGrid, 'tech-meta-item');
-        node('div', 'Evidence ID：' + citation.evidence_id, techGrid, 'tech-meta-item hash-item');
-        if (citation.pdf_sha256) {
-          node('div', 'PDF 文件 SHA-256：' + citation.pdf_sha256, techGrid, 'tech-meta-item hash-item');
-        }
-
-        // 本页提取原文折叠面板
-        const originalDetails = node('details', '', article, 'citation-details citation-original-details');
-        node('summary', '查看本页提取原文片段 (PDF Extract)', originalDetails);
-        node('pre', citation.original_text, originalDetails, 'citation-pre');
       });
     } else {
       if (citationsContainer) citationsContainer.style.display = 'none';
+      if (panelEmpty) panelEmpty.style.display = 'block';
+      if (panelCitationsContainer) panelCitationsContainer.style.display = 'none';
+      if (panelCitationCountBadge) panelCitationCountBadge.textContent = '0 项证据';
     }
 
-    // 渲染完成后顺畅定位到结果面板（确保移动端状态与首条中文解释均清晰处于可视区）
+    // 顺畅定位到结果面板
     setTimeout(() => {
       if (resultPanel) {
         const firstCard = resultPanel.querySelector('.assistant-step-card');
