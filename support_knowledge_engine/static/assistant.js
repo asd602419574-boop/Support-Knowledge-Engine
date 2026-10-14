@@ -237,10 +237,16 @@ if (copyButton) {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
 
-  // 1. 验证产品选择 (产品为必填项)
+  // 1. 验证产品选择 (产品为必填项：折叠时自动展开抽屉并聚焦)
   if (!productSelect || !productSelect.value) {
     toggleContextDrawer(true);
-    if (productSelect) productSelect.focus();
+    if (productSelect) {
+      productSelect.classList.add('input-error');
+      productSelect.focus();
+      productSelect.addEventListener('change', () => {
+        productSelect.classList.remove('input-error');
+      }, { once: true });
+    }
     if (productBadge) {
       productBadge.textContent = '⚠️ 请先选择适用产品型号！';
       setTimeout(syncProductBadge, 3000);
@@ -252,8 +258,12 @@ form.addEventListener('submit', async (event) => {
   const queryText = questionInput ? questionInput.value.trim() : '';
   if (queryText.length < 2) {
     if (questionInput) {
+      questionInput.classList.add('input-error');
       questionInput.focus();
       questionInput.placeholder = '⚠️ 请先输入客户故障描述或故障码...';
+      questionInput.addEventListener('input', () => {
+        questionInput.classList.remove('input-error');
+      }, { once: true });
     }
     return;
   }
@@ -343,7 +353,6 @@ form.addEventListener('submit', async (event) => {
     if (loadingBubble) loadingBubble.style.display = 'none';
     if (resultPanel) {
       resultPanel.style.display = 'block';
-      resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     // 根据不同状态设置状态栏
@@ -518,6 +527,18 @@ form.addEventListener('submit', async (event) => {
       if (citationsContainer) citationsContainer.style.display = 'none';
     }
 
+    // 渲染完成后顺畅定位到结果面板（确保移动端状态与首条中文解释均清晰处于可视区）
+    setTimeout(() => {
+      if (resultPanel) {
+        const firstCard = resultPanel.querySelector('.assistant-step-card');
+        if (window.innerWidth <= 640 && firstCard) {
+          firstCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else {
+          resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    }, 60);
+
   } catch (error) {
     if (loadingBubble) loadingBubble.style.display = 'none';
     if (resultPanel) resultPanel.style.display = 'block';
@@ -525,6 +546,11 @@ form.addEventListener('submit', async (event) => {
       ? '等待服务超时（45秒），未收到可验证回答。请检查模型或稍后重试。'
       : '网络或本地服务请求失败。请确认本地 Web 服务正常运行后重试。';
     setStatusBanner('error', '请求未完成', errorMsg, '❌');
+    setTimeout(() => {
+      if (resultPanel) {
+        resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 60);
   } finally {
     clearTimeout(timeout);
     button.disabled = false;

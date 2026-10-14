@@ -260,7 +260,7 @@ legend { padding: 0 8px; color: var(--accent-dark); font-weight: 750; }
 }
 
 .assistant-hero-main {
-  flex: 1 1 540px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -1221,6 +1221,8 @@ legend { padding: 0 8px; color: var(--accent-dark); font-weight: 750; }
   padding: 16px 20px;
   box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.08);
   animation: slide-up .2s ease;
+  max-height: 65vh;
+  overflow-y: auto;
 }
 
 .context-drawer-header {
@@ -1499,6 +1501,40 @@ legend { padding: 0 8px; color: var(--accent-dark); font-weight: 750; }
   box-shadow: none;
 }
 
+/* 输入校验高亮与微动效 */
+.context-drawer-grid select.input-error,
+.context-drawer-grid input.input-error,
+textarea.input-error {
+  border-color: var(--color-danger) !important;
+  outline: 3px solid rgba(239, 68, 68, 0.25) !important;
+  animation: field-shake .25s ease-in-out;
+}
+
+@keyframes field-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+/* 数据传输与隐私提醒 */
+.assistant-data-privacy-notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: #64748b;
+  text-align: center;
+  margin-top: 4px;
+  line-height: 1.4;
+  padding: 0 4px;
+}
+
+.assistant-data-privacy-notice svg {
+  flex-shrink: 0;
+  color: #94a3b8;
+}
+
 /* ==========================================================================
    响应式适配 (Responsive Adaptation)
    ========================================================================== */
@@ -1507,7 +1543,12 @@ legend { padding: 0 8px; color: var(--accent-dark); font-weight: 750; }
   .assistant-hero {
     flex-direction: column;
     align-items: stretch;
-    gap: 16px;
+    gap: 14px;
+  }
+
+  .assistant-hero-main {
+    flex: 0 0 auto;
+    width: 100%;
   }
 
   .assistant-model-card {
@@ -1530,12 +1571,190 @@ legend { padding: 0 8px; color: var(--accent-dark); font-weight: 750; }
 }
 
 @media (max-width: 640px) {
-  .assistant-welcome-card {
-    padding: 22px 16px;
+  /* 移动端顶栏精简化 */
+  .site-header .header-inner {
+    min-height: 48px;
+    padding-block: 6px;
+    gap: 10px;
   }
 
+  .page-stack {
+    padding-block: 8px 18px;
+    gap: 12px;
+  }
+
+  .brand-mark {
+    width: 32px;
+    height: 32px;
+    font-size: 0.85rem;
+  }
+
+  .brand strong {
+    font-size: 0.95rem;
+  }
+
+  .brand small {
+    display: none;
+  }
+
+  /* 顶部 Hero 与模型卡片首屏空间优化 */
+  .assistant-hero {
+    padding: 12px 14px;
+    gap: 10px;
+    border-radius: 12px;
+  }
+
+  .assistant-title {
+    font-size: 1.25rem;
+    margin-bottom: 4px;
+  }
+
+  .assistant-hero-desc {
+    font-size: 0.8rem;
+    line-height: 1.45;
+  }
+
+  .assistant-model-card {
+    padding: 10px 12px;
+    border-radius: 10px;
+  }
+
+  .model-status-desc {
+    font-size: 0.74rem;
+  }
+
+  /* 欢迎卡片首屏空间优化 */
+  .assistant-welcome-card {
+    padding: 16px 14px;
+    border-radius: 14px;
+  }
+
+  .welcome-avatar {
+    width: 38px;
+    height: 38px;
+    margin-bottom: 8px;
+  }
+
+  .welcome-title {
+    font-size: 1.2rem;
+  }
+
+  .welcome-desc {
+    font-size: 0.82rem;
+    margin-bottom: 12px;
+  }
+
+  .welcome-features-grid {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .welcome-feature-item {
+    padding: 8px 10px;
+    font-size: 0.78rem;
+  }
+
+  .welcome-examples-section {
+    padding-top: 10px;
+    margin-top: 10px;
+  }
+
+  .example-chip {
+    padding: 5px 10px;
+    font-size: 0.75rem;
+  }
+
+  /* 结果卡片与状态横幅 */
   .assistant-result-card {
-    padding: 18px 14px;
+    padding: 14px 12px;
+    border-radius: 12px;
+  }
+
+  .result-header {
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+  }
+
+  .result-avatar {
+    width: 28px;
+    height: 28px;
+  }
+
+  .result-header h2 {
+    font-size: 1.1rem;
+  }
+
+  .status-banner {
+    padding: 10px 12px;
+    gap: 10px;
+    margin-bottom: 12px;
+    border-radius: 8px;
+  }
+
+  .status-banner-title {
+    font-size: 0.88rem;
+  }
+
+  .status-banner-desc {
+    font-size: 0.75rem;
+  }
+
+  .assistant-warnings-container {
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .alert-card {
+    padding: 8px 10px;
+    border-radius: 8px;
+  }
+
+  .alert-card-tag {
+    font-size: 0.72rem;
+  }
+
+  .alert-card-text {
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+
+  .section-subheading {
+    margin-bottom: 4px;
+  }
+
+  .section-subheading h3 {
+    font-size: 0.95rem;
+  }
+
+  .steps-intro {
+    font-size: 0.78rem;
+    margin: 2px 0 8px;
+  }
+
+  .category-title {
+    margin: 10px 0 6px;
+    font-size: 0.88rem;
+  }
+
+  .assistant-step-card {
+    padding: 10px 12px;
+    gap: 10px;
+    border-radius: 10px;
+  }
+
+  .step-text {
+    font-size: 0.86rem;
+    line-height: 1.45;
+    margin-bottom: 6px;
+  }
+
+  .citation-details summary {
+    font-size: 0.75rem;
+    padding: 4px 6px;
+  }
+
+  .step-citation-anchor {
+    font-size: 0.76rem;
   }
 
   .chat-bubble-user,
@@ -1547,8 +1766,48 @@ legend { padding: 0 8px; color: var(--accent-dark); font-weight: 750; }
     display: none; /* 移动端窄屏精简次级芯片 */
   }
 
+  /* 底部悬浮控制台与输入框 */
   .assistant-input-container {
-    padding: 8px 12px 14px;
+    padding: 6px 10px 12px;
+  }
+
+  .assistant-input-bar {
+    padding: 8px 12px;
+    border-radius: 14px;
+  }
+
+  .assistant-input-bar textarea {
+    min-height: 36px;
+    font-size: 0.9rem;
+  }
+
+  .chat-send-btn {
+    min-height: 36px;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.82rem;
+  }
+
+  .context-drawer {
+    padding: 12px 14px;
+    border-radius: 14px;
+    max-height: 55vh;
+  }
+
+  .context-drawer-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .context-drawer-grid select,
+  .context-drawer-grid input {
+    height: 42px;
+    font-size: 0.95rem;
+  }
+
+  .assistant-data-privacy-notice {
+    font-size: 0.68rem;
+    line-height: 1.35;
+    margin-top: 3px;
   }
 
   .citation-header {

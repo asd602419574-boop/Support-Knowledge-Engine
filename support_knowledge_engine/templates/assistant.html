@@ -218,7 +218,7 @@
 
   <!-- 底部固定输入控制台 (TACP 风格悬浮控制台) -->
   <div class="assistant-input-container">
-    <form id="assistant-form" data-csrf="{{ csrf_token }}" data-url="{{ url_for('assistant.ask') }}">
+    <form id="assistant-form" novalidate data-csrf="{{ csrf_token }}" data-url="{{ url_for('assistant.ask') }}">
       
       <!-- 可展开上下文抽屉 (Product & Case Context Drawer) -->
       <div class="context-drawer" id="assistant-context-drawer" style="display: none;">
@@ -317,6 +317,16 @@
         </div>
 
       </div> <!-- /assistant-input-bar -->
+
+      <!-- 数据传输与隐私提醒 (保留明确可见且简短的提醒) -->
+      <div class="assistant-data-privacy-notice">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        <span>问题、产品及必要证据会发送至配置的模型服务；请勿输入客户姓名、电话、SN 等敏感信息。</span>
+      </div>
 
     </form>
   </div> <!-- /assistant-input-container -->
