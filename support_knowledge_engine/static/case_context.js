@@ -5,10 +5,11 @@
   const parser=window.SKECaseParser, products=JSON.parse($('assistant-product-catalog').textContent);
   const fields={product_id:'case-product', category:'case-category', fault_desc:'case-fault',
     detection_records:'case-detection', completed_actions:'case-done', pending_actions:'case-pending', firmware_version:'case-firmware'};
-  let pending=false, confirmed=null, applying=false;
+  let pending=false, confirmed=null, localConfirmed=null, applying=false;
   const mainValues=()=>({query:$('assistant-question').value.trim(),product_id:$('assistant-product').value,firmware_version:$('assistant-firmware').value.trim()});
   const matches=()=>!confirmed || JSON.stringify(mainValues())===JSON.stringify(confirmed.main);
   function invalidate() {
+    localConfirmed=null;
     confirmed=null; pending=true; $('case-reviewed').checked=false; $('case-send-consent').checked=false;
     message('问题、产品、固件或案例已修改，旧发送确认已撤销。请重新核对并确认，或清除案例后使用普通问答。');
   }
@@ -16,7 +17,7 @@
   function clear() {
     $('case-raw').value='';
     for (const id of Object.values(fields)) $(id).value='';
-    $('case-anonymized').checked=false; $('case-reviewed').checked=false; $('case-send-consent').checked=false; confirmed=null;
+    $('case-anonymized').checked=false; $('case-reviewed').checked=false; $('case-send-consent').checked=false; confirmed=null; localConfirmed=null;
     $('case-preview').hidden=true; $('case-gaps').replaceChildren();
     $('case-product-match').textContent=''; pending=false;
     message('本地案例已清除；已填入的问答内容可在主输入框编辑。');
@@ -26,13 +27,13 @@
   });
   $('case-clear').addEventListener('click', clear);
   $('case-raw').addEventListener('input', () => {
-    confirmed=null; $('case-send-consent').checked=false;
+    confirmed=null; localConfirmed=null; $('case-send-consent').checked=false;
     pending=Boolean($('case-raw').value.trim()); $('case-preview').hidden=true;
     $('case-reviewed').checked=false; $('case-anonymized').checked=false;
     message('请确认脱敏后重新提取；尚未发送任何问答。');
   });
   $('case-extract').addEventListener('click', () => {
-    confirmed=null; $('case-send-consent').checked=false;
+    confirmed=null; localConfirmed=null; $('case-send-consent').checked=false;
     pending=true; $('case-preview').hidden=true; $('case-reviewed').checked=false;
     if (!$('case-anonymized').checked) { message('请先人工确认已脱敏。'); return; }
     const result=parser.parseCase($('case-raw').value, products);
@@ -44,10 +45,14 @@
   });
   for (const id of Object.values(fields)) $(id).addEventListener('input', invalidate);
   $('case-send-consent').addEventListener('change',()=>{if(confirmed) invalidate();});
-  $('case-reviewed').addEventListener('change',()=>{if(confirmed && !$('case-reviewed').checked) invalidate();});
+  $('case-reviewed').addEventListener('change',()=>{if((confirmed || localConfirmed) && !$('case-reviewed').checked) invalidate();});
   for (const [id,field] of [['assistant-question','case-fault'],['assistant-product','case-product'],['assistant-firmware','case-firmware']]) {
     for (const event of ['input','change']) $(id).addEventListener(event,()=>{
       if(!applying && (confirmed || (pending && !$('case-preview').hidden))) { $(field).value=$(id).value; invalidate(); }
+      else if(!applying && localConfirmed) {
+        localConfirmed=null; $(field).value=$(id).value; $('case-reviewed').checked=false;
+        message('PCN 案例确认已撤销，请重新人工核对；普通问答可继续使用主输入。');
+      }
     });
   }
   $('case-confirm').addEventListener('click', () => {
@@ -62,8 +67,9 @@
       $(id).value=value; $(id).dispatchEvent(new Event('input',{bubbles:true})); $(id).dispatchEvent(new Event('change',{bubbles:true}));
     }
     applying=false; confirmed=review.context ? {main:mainValues(),context:review.context} : null;
+    localConfirmed={main:mainValues(),values:{...values}};
     pending=false; $('case-raw').value='';
-    message(confirmed ? '已确认本次案例发送。请主动点击生成；修改字段后须重新确认。' : '仅填入故障描述、产品和固件，案例记录不会发送。请主动点击生成。');
+    message(confirmed ? '已确认本次案例发送。请主动点击生成；修改字段后须重新确认。' : '仅填入故障描述、产品和固件，案例记录不会发送给模型；可主动进行本地 PCN 审查。');
     toggleContextDrawer(false); $('assistant-question').focus();
   });
   $('case-intake').addEventListener('keydown', event => {
@@ -95,6 +101,12 @@
     return text+'案例不能覆盖手册，计划操作不代表已执行或手册要求。\n\n【PDF 来源：可信证据释义】\n';
   }
   window.SKECaseContext={clear,renderResult,copyText,getContext:()=>confirmed && matches() ? {...confirmed.context} : null,
+    getLocalContext:()=>{
+      if(!localConfirmed || JSON.stringify(mainValues())!==JSON.stringify(localConfirmed.main))return null;
+      const result=parser.reviewCaseContext(localConfirmed.values,true);
+      if(result.errors.length)message(result.errors.join(' '));
+      return result.context;
+    },
     hasPendingReview:()=>pending || !matches(),showPending:()=>{
     $('case-intake').hidden=false; message('案例尚未确认。请核对并填入问答，或清除本地案例后再生成。'); $('case-message').focus();
   }};

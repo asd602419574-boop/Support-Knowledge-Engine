@@ -14,6 +14,7 @@ from .governance import (
 )
 from .routes import bp
 from .assistant import bp as assistant_bp
+from .pcn_review import bp as pcn_bp
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -38,6 +39,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     init_database(app.config["DATABASE"])
     app.register_blueprint(bp)
     app.register_blueprint(assistant_bp)
+    app.register_blueprint(pcn_bp)
 
     @app.context_processor
     def governance_labels() -> dict[str, object]:

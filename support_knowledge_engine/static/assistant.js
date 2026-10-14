@@ -350,6 +350,7 @@ form.addEventListener('submit', async (event) => {
 
   button.disabled = true;
   if (resultPanel) resultPanel.setAttribute('aria-busy', 'true');
+  window.SKEPCNReview?.clear();
   currentQueryResult = null;
   window.SKECaseContext?.renderResult({});
 

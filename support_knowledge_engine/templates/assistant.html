@@ -149,6 +149,19 @@
       </div>
 
       <!-- AI 排查结果核心卡片 -->
+      <section id="pcn-result" class="panel assistant-card assistant-result-card" hidden aria-label="PCN 流程合规审查" data-url="{{ url_for('pcn_review.review') }}">
+        <h2>PCN 流程合规审查 · 本地只读规则</h2>
+        <p class="steps-intro">与知识问答独立，不调用模型、不保存审查记录。请先人工确认案例；无需勾选向模型发送同意。本版仅识别 NTF 测试影像清理的有限表述。</p>
+        <p id="pcn-message" role="status" aria-live="polite"></p>
+        <div id="pcn-case-source"></div>
+        <div id="pcn-requirements"></div>
+        <div id="pcn-confirm-panel" hidden>
+          <label><input type="checkbox" id="pcn-applicability">我已阅读 PCN 完整原文，核对型号、适用条件及义务解释，确认本次适用</label>
+          <button type="button" id="pcn-compare" class="btn btn-sm">确认要求并比对执行记录</button>
+        </div>
+        <div id="pcn-checks"></div>
+        <p class="steps-intro">仅为记录层面核对，不证明真实执行；不得用于员工定责、绩效扣罚或自动拦截。</p>
+      </section>
       <section class="panel assistant-card assistant-result-card" aria-labelledby="assistant-result-title" aria-busy="false" id="assistant-result" style="display: none;">
         <div class="card-header result-header">
           <div class="result-title-group">
@@ -310,6 +323,7 @@
           <!-- 上方快速上下文条目 -->
           <div class="input-bar-context-row">
             <button type="button" id="assistant-case-open" class="context-toggle-btn">粘贴案例</button>
+            <button type="button" id="assistant-pcn-open" class="context-toggle-btn">PCN 审查</button>
             <button type="button" class="context-toggle-btn" id="assistant-context-toggle" title="展开/收起产品与固件设置">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
@@ -375,6 +389,7 @@
   <script src="{{ url_for('static', filename='case_parser.js') }}" defer></script>
   <script src="{{ url_for('static', filename='assistant.js') }}" defer></script>
   <script src="{{ url_for('static', filename='case_context.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='pcn_review.js') }}" defer></script>
 {% endblock %}
 
 {% block panel %}
