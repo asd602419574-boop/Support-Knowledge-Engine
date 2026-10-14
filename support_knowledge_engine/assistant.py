@@ -8,9 +8,10 @@ import re
 import secrets
 import sqlite3
 
-from flask import Blueprint, current_app, jsonify, render_template, request, session, url_for
+from flask import Blueprint, current_app, g, jsonify, render_template, request, session, url_for
 
 from .assistant_llm import ModelError, complete_chat, configuration_status
+from .assistant_case import validate_case_context, validate_case_assessment
 from .db import connect_database
 from .evidence import decide_evidence, snapshot_integrity_ok
 from .repository import get_product, get_product_aliases, list_products
@@ -72,6 +73,9 @@ VALIDATION_MESSAGES = {
     'operation_added': '中文释义增加了原文没有支持的维修操作。',
     'damage_claim': '原文只要求检查，中文释义却宣称已经损坏。',
     'coverage_invalid': '回答内容与覆盖度不一致。',
+    'case_schema': '案例核对输出字段不合法。',
+    'case_reference': '案例引用不属于本次确认记录或未覆盖全部记录。',
+    'case_status': '案例处理状态不一致。',
 }
 
 
@@ -92,12 +96,15 @@ def page():
 
 
 def _response(status, decision=None, *, model_called=False, http_status=200, message=None,
-              steps=None, citations=None, warnings=None, items=None, coverage='none', missing_information=None):
+              steps=None, citations=None, warnings=None, items=None, coverage='none', missing_information=None,
+              case_assessment=None):
+    records = getattr(g, 'assistant_case_records', [])
+    case_fields = {'case_records': records, 'case_assessment': case_assessment or []} if records else {}
     return jsonify(status=status, decision=decision.decision_type if decision else None,
                    reason_codes=list(decision.reason_codes) if decision else [],
                    model_called=model_called, message=message or MESSAGES.get(status, status),
                    steps=steps or [], citations=citations or [], warnings=warnings or [],
-                   items=items or [], coverage=coverage, missing_information=missing_information or []), http_status
+                   items=items or [], coverage=coverage, missing_information=missing_information or [], **case_fields), http_status
 
 
 def _excerpts(snapshot):
@@ -164,13 +171,15 @@ def _basic_translation_guards(quote, text):
     return _translation_guard_reason(quote, text) is None
 
 
-def _validate_answer(content, sources):
+def _validate_answer(content, sources, case_records=None):
     try:
         value = json.loads(content)
     except (ValueError, TypeError):
         raise ModelError('invalid_answer', 'answer_json') from None
-    if not isinstance(value, dict) or set(value) != {'items', 'coverage', 'missing_information'}:
+    expected = {'items', 'coverage', 'missing_information'} | ({'case_assessment'} if case_records else set())
+    if not isinstance(value, dict) or set(value) != expected:
         raise ModelError('invalid_answer', 'answer_schema')
+    assessment = validate_case_assessment(value['case_assessment'], case_records) if case_records else []
     entries, coverage, missing = value['items'], value['coverage'], value['missing_information']
     if (not isinstance(entries, list) or len(entries) > 6 or not isinstance(coverage, str)
             or coverage not in ('sufficient', 'partial', 'none') or not isinstance(missing, list)
@@ -212,7 +221,7 @@ def _validate_answer(content, sources):
         missing = ['applicable_document']
     if validated and missing:
         coverage = 'partial'
-    return {'items': validated, 'coverage': coverage, 'missing_information': missing}
+    return {'items': validated, 'coverage': coverage, 'missing_information': missing, 'case_assessment': assessment}
 
 
 def _runtime_query(db, question):
@@ -237,14 +246,24 @@ def ask():
             or (origin and origin.rstrip('/') != request.host_url.rstrip('/'))
             or request.headers.get('Sec-Fetch-Site') == 'cross-site'):
         return _response('forbidden', http_status=403, message='请求校验失败，请刷新助手页面后重试。')
+    if request.content_length and request.content_length > 20000:
+        return _response('invalid_request', http_status=400, message='本次问答内容超过大小限制。')
     body = request.get_json(silent=True)
-    if not isinstance(body, dict):
+    if not isinstance(body, dict) or not set(body) <= {'query', 'product_id', 'firmware_version', 'case_context'}:
         return _response('invalid_request', http_status=400, message='请发送 JSON 问题。')
     query, product_id, firmware = (body.get('query'), body.get('product_id'), body.get('firmware_version', ''))
     if (not isinstance(query, str) or not 1 <= len(query.strip()) <= 1000
             or not isinstance(product_id, str) or not product_id.isascii() or not product_id.isdigit()
             or len(product_id) > 10 or not isinstance(firmware, str) or len(firmware) > 80):
         return _response('invalid_request', http_status=400, message='请输入问题（最多 1000 字）、选择产品并核对固件版本。')
+    case_records = []
+    if 'case_context' in body:
+        try:
+            case_records = validate_case_context(body['case_context'], query, firmware)
+        except ValueError:
+            return _response('invalid_request', http_status=400,
+                             message='案例上下文不合法：请确认发送同意，核对字段、长度、脱敏及已执行／计划状态；移除指令样式文本。')
+        g.assistant_case_records = case_records
     try:
         with connect_database(current_app.config['DATABASE']) as db:
             product = get_product(db, int(product_id))
@@ -277,10 +296,14 @@ def ask():
         return _response('model_abstain', decision, warnings=warnings)
     payload = {'question': query.strip(), 'product': product['standard_name'],
                'firmware_version': firmware.strip() or None, 'evidence': sources}
+    if case_records:
+        payload['case_records'] = case_records
+        for source in sources:
+            source['excerpt_types'] = [_quote_kind(quote) for quote in source['excerpts']]
     content = None
     try:
         content = complete_chat(current_app.config, payload)
-        answer = _validate_answer(content, sources)
+        answer = _validate_answer(content, sources, case_records)
     except ModelError as exc:
         reason = exc.validation_reason if exc.validation_reason in VALIDATION_MESSAGES else None
         if exc.code == 'invalid_answer':
@@ -304,7 +327,7 @@ def ask():
                           'pdf_url': url_for('main.document_file', document_id=e.document_id,
                                              sha256=e.pdf_sha256) + f'#page={e.page_number}',
                           'document_url': url_for('main.document_detail', document_id=e.document_id)})
-    return _response('answered', decision, model_called=True, items=items,
+    return _response('answered', decision, model_called=True, items=items, case_assessment=answer['case_assessment'],
                      steps=[item for item in items if item['type'] == 'action'],
                      coverage=answer['coverage'], missing_information=missing, citations=citations,
                      warnings=warnings + ['中文内容是 AI 基于资料的释义，不是原始手册文字或现场确诊。来源与原文匹配校验不能证明中文语义完全正确，请展开原文对照。'])

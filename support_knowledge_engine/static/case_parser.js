@@ -17,10 +17,10 @@
   }
   const labels = {
     产品名称:'product', 产品型号:'product', 产品:'product', 设备型号:'product', 机型:'product', 型号:'product',
-    故障分类:'category', 产品故障:'category', 具体故障描述:'fault', 故障描述:'fault', 故障现象:'fault',
+    故障分类:'category', 产品故障:'category', 具体故障描述:'fault', 故障描述:'fault', 故障现象:'fault', 故障:'fault',
     检测记录:'detection', 检测结果:'detection', 检测过程:'detection',
     已执行处理:'done', 已完成处理:'done', 维修记录:'treatment', 处理过程:'treatment', 案例记录:'treatment',
-    后续计划:'pending', 计划处理:'pending', 建议操作:'pending', 固件版本:'firmware',
+    后续计划:'pending', 计划处理:'pending', 计划操作:'pending', 建议操作:'pending', 固件版本:'firmware', 固件:'firmware',
     工单说明:'ignore', 备注:'ignore', SN:'ignore', 序列号:'ignore', 工单号:'ignore', 案例号:'ignore'
   };
   const header = new RegExp('(' + Object.keys(labels).sort((a,b) => b.length-a.length).join('|') + ')\\s*[:：]', 'g');
@@ -57,7 +57,7 @@
     }
     result.fault_desc = sections.fault.join('\n');
     result.firmware_version = sections.firmware.length === 1 ? sections.firmware[0] : '';
-    if (/^(?:未知|不确定|待确认|待核对|不详|未提供)$/.test(result.firmware_version)) result.firmware_version='';
+    if (/^(?:未知|不确定|待确认|未确认|待核对|不详|未提供)$/.test(result.firmware_version)) result.firmware_version='';
     if (sections.firmware.length > 1) result.gaps.push('固件字段重复或矛盾，请核对后填写。');
     if (!result.fault_desc) result.gaps.push('未识别到故障描述，请人工补充。');
     if (!result.firmware_version) result.gaps.push('固件版本未确认，可留空；适用性仍由现有证据规则判定。');
@@ -85,7 +85,22 @@
     if (privacyRisks(Object.values(fields).filter(v => typeof v === 'string').join('\n')).length) errors.push('编辑内容仍存在明显隐私风险，请先脱敏。');
     return {errors, payload:errors.length ? null : {query, product_id:product, firmware_version:firmware}};
   }
-  const api={parseCase, privacyRisks, reviewCase, MAX_CASE_CHARS};
+  function reviewCaseContext(fields, consent) {
+    if (!consent) return {context:null,errors:[]};
+    const limits={category:120,detection_records:1200,completed_actions:1200,pending_actions:1200};
+    const context={}, errors=[];
+    for (const [field,limit] of Object.entries(limits)) {
+      const text=normalize(fields[field]);context[field]=text;
+      if(text.length>limit || text.split('\n').some(line=>line.trim().length>400)) errors.push('案例字段过长，请精简后再确认。');
+    }
+    const text=Object.values(context).join('\n');
+    const lines=Object.values(context).flatMap(v=>v.split('\n')).filter(v=>v.trim());
+    if(!text.trim() || Object.values(context).reduce((n,v)=>n+v.length,0)>3000 || lines.length>12 || new TextEncoder().encode(JSON.stringify(context)).length>9000) errors.push('上下文须有内容，总计最多 3000 字、12 条记录。');
+    if(privacyRisks(text).length || /[<>]|https?:\/\/|www\.|(?:忽略|覆盖|绕过).{0,16}(?:指令|规则|验证|系统)|系统提示词|system\s*prompt|(?:system|assistant|role)\s*[:：]|tool_calls|function_call|执行命令|调用工具|泄露.*密钥/i.test(text)) errors.push('请移除敏感信息或指令样式文本后再发送。');
+    if(planned.test(context.detection_records) || planned.test(context.completed_actions)) errors.push('计划、建议或未完成操作须放入待确认栏，不能作为已执行记录。');
+    return {context:errors.length ? null : {...context,consent:true},errors:[...new Set(errors)]};
+  }
+  const api={parseCase, privacyRisks, reviewCase, reviewCaseContext, MAX_CASE_CHARS};
   if (typeof module !== 'undefined' && module.exports) module.exports=api;
   else root.SKECaseParser=api;
 })(typeof window === 'undefined' ? globalThis : window);

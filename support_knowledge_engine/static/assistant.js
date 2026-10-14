@@ -191,6 +191,7 @@ if (clearButton) {
     if (panelCitationCountBadge) panelCitationCountBadge.textContent = '0 项证据';
 
     currentQueryResult = null;
+    window.SKECaseContext?.renderResult({});
     setStatusBanner(
       'idle',
       '等待提交问题。请选择产品并输入故障描述。',
@@ -264,6 +265,7 @@ if (copyButton) {
     if (req.firmware) text += '固件版本：' + req.firmware + '\n';
     if (req.query) text += '故障现象：' + req.query + '\n';
     text += '判定状态：' + (currentQueryResult.decision || '未知') + '\n\n';
+    text += window.SKECaseContext?.copyText(currentQueryResult) || '';
 
     text += '中文内容为 AI 释义，不是手册原文或现场确诊。\n';
     text += '资料覆盖度（模型评估）：' + (currentQueryResult.coverage || 'none') + '\n\n';
@@ -349,9 +351,11 @@ form.addEventListener('submit', async (event) => {
   button.disabled = true;
   if (resultPanel) resultPanel.setAttribute('aria-busy', 'true');
   currentQueryResult = null;
+  window.SKECaseContext?.renderResult({});
 
   // 捕获本次提交时的请求输入快照
   const requestSnapshot = {
+    caseContext: window.SKECaseContext?.getContext() || null,
     productId: productSelect.value,
     productName: productSelect.selectedIndex >= 0
       ? productSelect.options[productSelect.selectedIndex].text
@@ -417,6 +421,7 @@ form.addEventListener('submit', async (event) => {
   try {
     const fields = {query: requestSnapshot.query, product_id: requestSnapshot.productId,
       firmware_version: requestSnapshot.firmware};
+    if(requestSnapshot.caseContext) fields.case_context={...requestSnapshot.caseContext};
     const response = await fetch(form.dataset.url, {
       method: 'POST',
       headers: {
@@ -428,6 +433,7 @@ form.addEventListener('submit', async (event) => {
     });
 
     const data = await response.json();
+    window.SKECaseContext?.renderResult(data);
     currentQueryResult = {
       ...data,
       requestSnapshot: requestSnapshot,
@@ -572,7 +578,7 @@ form.addEventListener('submit', async (event) => {
       if (!cautionsList.children.length) node('p', '本次回答未列出注意事项；仍需核对原文完整条件。', cautionsList, 'steps-intro');
     } else {
       if (stepsContainer) stepsContainer.style.display = 'none';
-      if (resultActions) resultActions.style.display = 'none';
+      if (resultActions) resultActions.style.display = (data.case_records || []).length ? 'block' : 'none';
     }
 
     // 渲染引用 (Citations)：同时渲染右侧常驻面板与移动端内联容器

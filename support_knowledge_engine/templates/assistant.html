@@ -196,6 +196,7 @@
         <div id="assistant-warnings" class="assistant-warnings-container"></div>
 
         <!-- 核心排查建议结构化展示 -->
+        <section id="assistant-case-result" class="assistant-steps-section" hidden aria-label="本次已确认案例来源"></section>
         <div id="assistant-steps-container" class="assistant-steps-section" style="display: none;">
           <div class="section-subheading">
             <span class="section-subheading-icon">📋</span>
@@ -278,7 +279,7 @@
 
           <section id="case-intake" class="case-intake" hidden aria-labelledby="case-title">
             <h3 id="case-title">粘贴脱敏案例 · 本地识别与人工核对</h3>
-            <p class="case-notice">仅填写确认后的故障描述、产品和固件。检测／处理记录只供核对，不参与模型诊断，不作为 PDF 证据。原文不保存，也不自动发送；系统不能识别全部敏感信息。</p>
+            <p class="case-notice">原始粘贴文本仅在本页解析，不保存、不自动发送。确认并同意后，分类、检测及处理记录会随本次问题发送给已配置模型服务（DeepSeek）；案例记录不代表设备实际状态，也不是 PDF 证据。系统不能识别全部敏感信息。</p>
             <label for="case-raw">脱敏案例文本（最多 12000 字）</label>
             <textarea id="case-raw" rows="5" autocomplete="off" placeholder="产品名称：ACM2&#10;故障描述：出现 AM2-17&#10;检测记录：上电显示故障码&#10;维修记录：计划检查，尚未执行"></textarea>
             <label class="case-check"><input type="checkbox" id="case-anonymized">我已人工确认移除姓名、电话、邮箱、SN、案例号和身份信息</label>
@@ -297,6 +298,7 @@
               <label for="case-firmware">固件版本（可选）</label><input id="case-firmware">
               <strong>信息缺口与核对提示</strong><ul id="case-gaps"></ul>
               <label class="case-check"><input type="checkbox" id="case-reviewed">我已人工核对产品、故障、检测和处理状态，并再次确认脱敏</label>
+              <label class="case-check"><input type="checkbox" id="case-send-consent">我同意将上述确认后的分类、检测、已执行及待确认操作发送给模型服务（DeepSeek），仅用于本次辅助诊断。未勾选时只填入原三字段。</label>
               <button type="button" id="case-confirm" class="btn btn-sm">确认并填入问答</button>
             </div>
           </section>

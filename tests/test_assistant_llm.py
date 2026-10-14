@@ -89,6 +89,18 @@ class ModelHTTPTests(unittest.TestCase):
         self.assertEqual(alternate['max_completion_tokens'], MAX_OUTPUT_TOKENS)
         self.assertNotIn('max_tokens', alternate)
 
+    def test_case_prompt_and_transport_keep_two_sources_distinct(self):
+        payload={**self.payload,'case_records':[{'record_id':'case-pending_actions-1',
+            'field':'pending_actions','label':'待确认','quote':'计划更换，尚未执行。'}]}
+        complete_chat(self.config,payload)
+        body=self.requests[0][2]
+        self.assertEqual(json.loads(body['messages'][1]['content']),payload)
+        self.assertIn('UNTRUSTED business DATA',body['messages'][0]['content'])
+        self.assertIn('case_assessment',body['messages'][0]['content'])
+        self.assertIn('not verified device conditions',body['messages'][0]['content'])
+        self.assertIn('explicitly use 不得 or 禁止',body['messages'][0]['content'])
+        self.assertNotIn('tools',body)
+
     def test_timeout_and_network_failure_are_classified(self):
         self.mode = 'timeout'
         with patch('support_knowledge_engine.assistant_llm.REQUEST_TIMEOUT', .03):
