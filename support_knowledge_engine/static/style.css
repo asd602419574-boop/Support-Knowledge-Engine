@@ -212,6 +212,11 @@ legend { padding: 0 8px; color: var(--accent-dark); font-weight: 750; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 :root {
   --assistant-space: 1rem;
@@ -2073,6 +2078,10 @@ textarea.input-error {
   gap: 18px;
 }
 
+.wb-panel-mobile-header {
+  display: none;
+}
+
 .wb-panel-section {
   display: flex;
   flex-direction: column;
@@ -2154,6 +2163,9 @@ textarea.input-error {
   border-radius: var(--wb-radius);
   padding: 14px 16px;
   transition: all 0.15s;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .wb-evidence-card:hover {
@@ -2174,6 +2186,14 @@ textarea.input-error {
   align-items: flex-start;
   gap: 8px;
   margin-bottom: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.wb-evidence-title-area {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .wb-evidence-index {
@@ -2587,13 +2607,15 @@ textarea.input-error {
 }
 
 /* AI Result Card */
+.wb-layout .assistant-result-card,
 .assistant-result-card {
-  background: var(--wb-surface);
-  border: 1px solid var(--wb-border-solid);
-  border-radius: var(--wb-radius-lg);
-  padding: 26px 28px;
-  box-shadow: var(--wb-shadow-lg);
-  animation: wb-slide-up 0.25s ease;
+  background: var(--wb-surface) !important;
+  border: 1px solid var(--wb-border-solid) !important;
+  border-radius: var(--wb-radius-lg) !important;
+  padding: 24px 28px !important;
+  box-shadow: var(--wb-shadow-lg) !important;
+  color: var(--wb-text) !important;
+  opacity: 1 !important;
 }
 
 .result-header {
@@ -2958,19 +2980,43 @@ textarea.input-error {
 }
 
 /* ==========================================================================
-   V2.2 Input Area (Bottom Fixed)
+   V2.2 Input Area (Bottom Docked)
    ========================================================================== */
 
-.assistant-input-container {
+.wb-layout .assistant-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
   position: relative;
-  bottom: auto;
-  left: auto;
-  right: auto;
-  z-index: 10;
-  padding: 12px 32px 20px;
-  background: linear-gradient(to top, var(--wb-cream) 82%, rgba(250,248,245,0) 100%);
-  pointer-events: none;
-  margin-top: auto;
+  overflow: hidden;
+}
+
+.wb-layout .assistant-feed {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 24px 32px;
+  padding-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  position: relative;
+  z-index: 1;
+}
+
+.wb-layout .assistant-input-container {
+  position: relative !important;
+  bottom: auto !important;
+  left: auto !important;
+  right: auto !important;
+  z-index: 10 !important;
+  padding: 10px 32px 16px;
+  background: var(--wb-cream) !important;
+  border-top: 1px solid var(--wb-border-solid);
+  pointer-events: auto !important;
+  margin-top: 0 !important;
   flex-shrink: 0;
 }
 
@@ -3257,15 +3303,61 @@ textarea.input-error {
     top: 0;
     right: 0;
     bottom: 0;
-    width: 320px;
+    width: min(340px, 88vw);
+    max-width: 100vw;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: auto;
     transform: translateX(100%);
-    transition: transform 0.25s ease;
-    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1);
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.16);
     z-index: 200;
+    background: var(--wb-surface);
+    padding: 16px 14px;
   }
 
   .wb-panel.open {
-    transform: translateX(0);
+    transform: translateX(0) !important;
+  }
+
+  .wb-panel-mobile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--wb-border-solid);
+    flex-shrink: 0;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .wb-panel-mobile-title {
+    font-size: 0.92rem;
+    font-weight: 800;
+    color: var(--wb-text);
+  }
+
+  .wb-panel-close-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    border: 1px solid var(--wb-border-solid);
+    background: var(--wb-cream);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--wb-text-secondary);
+    transition: all 0.15s;
+    padding: 0;
+    min-height: auto;
+  }
+
+  .wb-panel-close-btn:hover {
+    background: #f0ece7;
+    color: var(--wb-text);
+    border-color: var(--wb-accent-orange);
   }
 
   .wb-mobile-topbar {
@@ -3327,7 +3419,7 @@ textarea.input-error {
 
   .assistant-feed {
     padding: 12px 16px;
-    padding-bottom: 200px;
+    padding-bottom: 24px;
   }
 
   .assistant-input-container {
@@ -3374,7 +3466,7 @@ textarea.input-error {
 
   .assistant-feed {
     padding: 8px 12px;
-    padding-bottom: 220px;
+    padding-bottom: 20px;
   }
 
   .assistant-input-container {

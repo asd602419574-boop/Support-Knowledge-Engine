@@ -70,43 +70,91 @@
 
     <!-- Right Panel -->
     <aside class="wb-panel" id="wb-panel">
+      <!-- 移动端抽屉专属关闭头部 -->
+      <div class="wb-panel-mobile-header" id="wb-panel-mobile-header">
+        <span class="wb-panel-mobile-title">可溯源证据与上下文</span>
+        <button type="button" class="wb-panel-close-btn" id="wb-panel-close" aria-label="关闭证据抽屉" title="关闭抽屉 (Esc)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
       {% block panel %}{% endblock %}
     </aside>
   </div>
 
-  <!-- Mobile overlay for sidebar -->
+  <!-- Mobile overlay for drawers -->
   <div class="wb-overlay" id="wb-overlay"></div>
 
   <script>
-    // Mobile sidebar toggle
+    // 移动端侧栏与证据抽屉统一交互管理
     (function() {
       const sidebar = document.getElementById('wb-sidebar');
       const overlay = document.getElementById('wb-overlay');
       const toggleBtn = document.getElementById('wb-menu-toggle');
       const panelToggle = document.getElementById('wb-panel-toggle');
       const panel = document.getElementById('wb-panel');
+      const panelCloseBtn = document.getElementById('wb-panel-close');
 
-      function closeSidebar() {
+      function closeAll() {
         if (sidebar) sidebar.classList.remove('open');
+        if (panel) panel.classList.remove('open');
         if (overlay) overlay.classList.remove('open');
       }
 
-      if (toggleBtn) {
-        toggleBtn.addEventListener('click', function() {
-          sidebar.classList.toggle('open');
-          overlay.classList.toggle('open');
-        });
-      }
-      if (overlay) {
-        overlay.addEventListener('click', closeSidebar);
+      function openSidebar() {
+        if (panel) panel.classList.remove('open');
+        if (sidebar) sidebar.classList.add('open');
+        if (overlay) overlay.classList.add('open');
       }
 
-      // Mobile panel toggle
-      if (panelToggle && panel) {
-        panelToggle.addEventListener('click', function() {
-          panel.classList.toggle('open');
-        });
+      function openPanel() {
+        if (sidebar) sidebar.classList.remove('open');
+        if (panel) panel.classList.add('open');
+        if (overlay) overlay.classList.add('open');
       }
+
+      function togglePanel() {
+        if (panel && panel.classList.contains('open')) {
+          closeAll();
+        } else {
+          openPanel();
+        }
+      }
+
+      function toggleSidebar() {
+        if (sidebar && sidebar.classList.contains('open')) {
+          closeAll();
+        } else {
+          openSidebar();
+        }
+      }
+
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', toggleSidebar);
+      }
+      if (panelToggle) {
+        panelToggle.addEventListener('click', togglePanel);
+      }
+      if (panelCloseBtn) {
+        panelCloseBtn.addEventListener('click', closeAll);
+      }
+      if (overlay) {
+        overlay.addEventListener('click', closeAll);
+      }
+
+      // Esc 快捷键关闭抽屉
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' || e.key === 'Esc') {
+          closeAll();
+        }
+      });
+
+      // 暴露全局 API 供引用链接或其它脚本平滑呼出证据抽屉
+      window.wbOpenPanel = openPanel;
+      window.wbCloseAll = closeAll;
+      window.wbTogglePanel = togglePanel;
     })();
   </script>
 </body>
