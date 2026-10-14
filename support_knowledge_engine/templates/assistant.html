@@ -245,7 +245,7 @@
                 <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
               </svg>
               <strong>关联产品与设备上下文</strong>
-              <span class="context-drawer-hint">（MVP-2 支持产品型号与固件版本）</span>
+              <span class="context-drawer-hint">（案例仅在本页核对）</span>
             </div>
             <button type="button" class="btn btn-ghost btn-sm" id="assistant-context-close">收起 ✕</button>
           </div>
@@ -276,11 +276,30 @@
             </div>
           </div>
 
-          <!-- 预留工单上下文说明 -->
-          <div class="context-drawer-reserved">
-            <div class="reserved-badge">扩展预留</div>
-            <span class="reserved-text">单轮独立诊断模式：工单自动关联与合规审查将在后续版本支持。</span>
-          </div>
+          <section id="case-intake" class="case-intake" hidden aria-labelledby="case-title">
+            <h3 id="case-title">粘贴脱敏案例 · 本地识别与人工核对</h3>
+            <p class="case-notice">仅填写确认后的故障描述、产品和固件。检测／处理记录只供核对，不参与模型诊断，不作为 PDF 证据。原文不保存，也不自动发送；系统不能识别全部敏感信息。</p>
+            <label for="case-raw">脱敏案例文本（最多 12000 字）</label>
+            <textarea id="case-raw" rows="5" autocomplete="off" placeholder="产品名称：ACM2&#10;故障描述：出现 AM2-17&#10;检测记录：上电显示故障码&#10;维修记录：计划检查，尚未执行"></textarea>
+            <label class="case-check"><input type="checkbox" id="case-anonymized">我已人工确认移除姓名、电话、邮箱、SN、案例号和身份信息</label>
+            <div class="case-buttons"><button type="button" id="case-extract" class="btn btn-sm">本地提取</button><button type="button" id="case-clear" class="btn btn-ghost btn-sm">清除本地案例</button></div>
+            <p id="case-message" role="status" aria-live="polite" tabindex="-1"></p>
+            <div id="case-preview" hidden>
+              <p id="case-product-match" class="case-notice"></p>
+              <div class="context-drawer-grid">
+                <div class="form-group"><label for="case-product">产品型号（必须人工确认）</label><select id="case-product"><option value="">请选择现有产品</option>{% for product in products %}<option value="{{ product.id }}">{{ product.standard_name }}</option>{% endfor %}</select></div>
+                <div class="form-group"><label for="case-category">故障分类（可选）</label><input id="case-category"></div>
+              </div>
+              <label for="case-fault">故障描述（填入问答，2–1000 字）</label><textarea id="case-fault" rows="3"></textarea>
+              <label for="case-detection">已记录检测结果（仅供核对）</label><textarea id="case-detection" rows="2"></textarea>
+              <label for="case-done">已执行处理（案例所述，尚非证据）</label><textarea id="case-done" rows="2"></textarea>
+              <label for="case-pending">计划／建议／完成状态未确认（仅供核对）</label><textarea id="case-pending" rows="2"></textarea>
+              <label for="case-firmware">固件版本（可选）</label><input id="case-firmware">
+              <strong>信息缺口与核对提示</strong><ul id="case-gaps"></ul>
+              <label class="case-check"><input type="checkbox" id="case-reviewed">我已人工核对产品、故障、检测和处理状态，并再次确认脱敏</label>
+              <button type="button" id="case-confirm" class="btn btn-sm">确认并填入问答</button>
+            </div>
+          </section>
         </div>
 
         <!-- 核心输入卡片栏 (Claude/Intercom 风格悬浮 Bar) -->
@@ -288,6 +307,7 @@
           
           <!-- 上方快速上下文条目 -->
           <div class="input-bar-context-row">
+            <button type="button" id="assistant-case-open" class="context-toggle-btn">粘贴案例</button>
             <button type="button" class="context-toggle-btn" id="assistant-context-toggle" title="展开/收起产品与固件设置">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
@@ -349,7 +369,10 @@
     </div> <!-- /assistant-input-container -->
 
   </div> <!-- /assistant-container -->
+  <script id="assistant-product-catalog" type="application/json">{{ case_products|tojson }}</script>
+  <script src="{{ url_for('static', filename='case_parser.js') }}" defer></script>
   <script src="{{ url_for('static', filename='assistant.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='case_context.js') }}" defer></script>
 {% endblock %}
 
 {% block panel %}

@@ -13,7 +13,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request, ses
 from .assistant_llm import ModelError, complete_chat, configuration_status
 from .db import connect_database
 from .evidence import decide_evidence, snapshot_integrity_ok
-from .repository import get_product, list_products
+from .repository import get_product, get_product_aliases, list_products
 from .normalization import normalize_query
 from .runtime import RuntimeCompositionError, RuntimeRequest, run_runtime
 
@@ -81,7 +81,11 @@ def page():
         session['assistant_csrf'] = secrets.token_urlsafe(32)
     with connect_database(current_app.config['DATABASE']) as db:
         products = list_products(db)
+        case_products = [{'id': str(p['id']), 'name': p['standard_name'],
+                          'aliases': [a['alias_text'] for a in get_product_aliases(db, p['id'])
+                                      if a['is_enabled']]} for p in products]
     return render_template('assistant.html', products=products,
+                           case_products=case_products,
                            model_status=configuration_status(current_app.config),
                            llm_model=current_app.config['LLM_MODEL'],
                            csrf_token=session['assistant_csrf'])

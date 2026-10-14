@@ -3693,3 +3693,15 @@ textarea.input-error {
     justify-content: center;
   }
 }
+/* MVP-3.1: reuse the existing scrollable context drawer. */
+.case-intake { border-top: 1px solid var(--wb-border-solid); margin-top: 14px; padding-top: 12px; font-size: .82rem; }
+.case-intake[hidden], #case-preview[hidden] { display: none; }
+.case-intake h3 { margin: 0 0 8px; font-size: .95rem; }
+.case-notice, #case-gaps { color: var(--wb-text-secondary); line-height: 1.6; }
+.case-intake > label, #case-preview > label { display: block; margin: 8px 0 5px; }
+.case-intake textarea, .case-intake input:not([type=checkbox]), .case-intake select { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--wb-border-solid); border-radius: 6px; background: var(--wb-surface); color: var(--wb-text); font: inherit; }
+.case-intake textarea { resize: vertical; min-height: 54px; }
+.case-intake .case-check { display: flex; align-items: flex-start; gap: 6px; line-height: 1.6; }
+.case-check input[type=checkbox] { width: auto; flex: none; margin-top: 4px; }
+.case-buttons { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+#case-message { color: var(--wb-text); line-height: 1.6; }

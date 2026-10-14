@@ -168,6 +168,7 @@ document.querySelectorAll('.example-chip').forEach((chip) => {
 // 清空当前输入并返回欢迎态
 if (clearButton) {
   clearButton.addEventListener('click', () => {
+    window.SKECaseContext?.clear();
     if (questionInput) {
       questionInput.value = '';
       questionInput.style.height = 'auto';
@@ -308,6 +309,11 @@ if (copyButton) {
 // 表单提交与端到端交互流
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (window.SKECaseContext?.hasPendingReview()) {
+    toggleContextDrawer(true);
+    window.SKECaseContext.showPending();
+    return;
+  }
 
   // 1. 验证产品选择 (产品为必填项：折叠时自动展开抽屉并聚焦)
   if (!productSelect || !productSelect.value) {
@@ -346,6 +352,7 @@ form.addEventListener('submit', async (event) => {
 
   // 捕获本次提交时的请求输入快照
   const requestSnapshot = {
+    productId: productSelect.value,
     productName: productSelect.selectedIndex >= 0
       ? productSelect.options[productSelect.selectedIndex].text
       : '',
@@ -408,14 +415,15 @@ form.addEventListener('submit', async (event) => {
   const timeout = setTimeout(() => controller.abort(), 45000);
 
   try {
-    const fields = new FormData(form);
+    const fields = {query: requestSnapshot.query, product_id: requestSnapshot.productId,
+      firmware_version: requestSnapshot.firmware};
     const response = await fetch(form.dataset.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Assistant-CSRF': form.dataset.csrf,
       },
-      body: JSON.stringify(Object.fromEntries(fields)),
+      body: JSON.stringify(fields),
       signal: controller.signal,
     });
 
