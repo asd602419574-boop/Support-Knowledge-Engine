@@ -42,12 +42,13 @@ class PCNReviewTests(unittest.TestCase):
         return self.post({**body,'confirmation_token':preview.json['confirmation_token']})
 
     def test_four_states_and_full_quote_provenance(self):
-        cases=[(DONE,'','通过'),('','','待确认'),('',
-            '机身存储中的测试图片和测试视频尚未删除。','风险提醒'),('',NEGATIVE,'明确冲突')]
+        cases=[(DONE,'',DETECTION,'通过'),('','',DETECTION,'待确认'),('',
+            '机身存储中的测试图片和测试视频尚未删除。',DETECTION,'风险提醒'),
+            ('','',DETECTION+'\n'+NEGATIVE,'明确冲突')]
         with patch('support_knowledge_engine.assistant.complete_chat',side_effect=RuntimeError('must not call')) as model:
-            for done,pending,state in cases:
+            for done,pending,detection,state in cases:
                 with self.subTest(state=state):
-                    data=self.review(self.body(done,pending)).json
+                    data=self.review(self.body(done,pending,detection)).json
                     self.assertEqual(data['checks'][0]['state'],state)
                     check=data['checks'][0]
                     self.assertIn('delete all test photos and videos',check['pcn_quote'])
@@ -58,6 +59,21 @@ class PCNReviewTests(unittest.TestCase):
                     with self.client.get(check['pdf_url']) as response:
                         self.assertEqual(response.status_code,200)
         model.assert_not_called()
+
+    def test_pending_reverse_record_never_escalates_to_clear_conflict(self):
+        for done in ('',DONE):
+            with self.subTest(done=done):
+                check=self.review(self.body(done=done,pending=NEGATIVE)).json['checks'][0]
+                self.assertEqual(check['state'],'风险提醒')
+                self.assertIn('人工核实',check['message'])
+                self.assertIn(NEGATIVE,[record['quote'] for record in check['case_matches']])
+
+    def test_direct_conflict_requires_observation_field_and_complete_conditions(self):
+        for body in [self.body(detection=DETECTION+'\n'+NEGATIVE),self.body(done=NEGATIVE)]:
+            self.assertEqual(self.review(body).json['checks'][0]['state'],'明确冲突')
+        for detection in ['NTF 检测未复现故障。\n'+NEGATIVE,
+                          '已在机身存储拍摄测试图片和测试视频。\n'+NEGATIVE]:
+            self.assertEqual(self.review(self.body(detection=detection)).json['checks'][0]['state'],'待确认')
 
     def test_missing_record_and_plans_do_not_assert_non_execution(self):
         for text in ['', '计划删除机身存储中的测试图片和测试视频。', '建议删除机身存储中的测试图片和测试视频。', '计划删除机身存储中的测试图片和测试视频，尚未执行。']:

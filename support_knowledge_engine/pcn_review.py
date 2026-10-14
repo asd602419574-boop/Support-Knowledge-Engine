@@ -88,7 +88,8 @@ def _compare(requirement, records):
     ntf = [r for r in observations if NTF.fullmatch(r['quote'])]
     capture = [r for r in observations if CAPTURE.fullmatch(r['quote'])]
     completed = [r for r in observations if DONE.fullmatch(r['quote'])]
-    opposite = [r for r in records if r['field'] != 'category' and OPPOSITE.fullmatch(r['quote'])]
+    opposite = [r for r in observations if OPPOSITE.fullmatch(r['quote'])]
+    pending_opposite = [r for r in records if r['field'] == 'pending_actions' and OPPOSITE.fullmatch(r['quote'])]
     relevant = [r for r in records if r['field'] != 'category' and re.search(r'删除|清理|清空',r['quote'])]
     missing = []
     if not ntf: missing.append('缺少可核对的 NTF 检测场景记录。')
@@ -101,6 +102,8 @@ def _compare(requirement, records):
         state, message = '风险提醒', '案例记录互相矛盾，需核对执行时间及实际清理情况。'
     elif opposite:
         state, message = '明确冲突', '记录明确表示设备已交还且测试影像未删除，与已确认要求的执行节点直接相反；仅为记录层面冲突。'
+    elif pending_opposite:
+        state, message = '风险提醒', '反向描述仅在计划／完成状态未确认字段中，不能据此判定明确冲突；请人工核实执行状态。'
     elif completed:
         # A second ambiguous/partial cleaning record cannot silently be discarded.
         uncertain = [r for r in relevant if r not in completed and r['field'] != 'pending_actions']
