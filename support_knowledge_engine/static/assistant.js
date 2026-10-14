@@ -217,7 +217,8 @@ function renderEvidenceCard(citation, index, container, isPanel) {
   const topBar = node('div', '', article, isPanel ? 'wb-evidence-header' : 'citation-header');
   const titleArea = node('div', '', topBar, isPanel ? 'wb-evidence-title-area' : 'citation-title-area');
   node('span', '[' + (index + 1) + ']', titleArea, isPanel ? 'wb-evidence-index' : 'citation-index-tag');
-  node('h4', citation.filename, titleArea, isPanel ? 'wb-evidence-filename' : 'citation-filename');
+  const filenameEl = node('h4', citation.filename, titleArea, isPanel ? 'wb-evidence-filename' : 'citation-filename');
+  filenameEl.title = citation.filename; // 确保完整名称随时悬停可查
 
   node('span', '📄 第 ' + citation.page_number + ' 页 (P.' + citation.page_number + ')', topBar, isPanel ? 'wb-evidence-page' : 'citation-page-badge');
 
@@ -432,12 +433,14 @@ form.addEventListener('submit', async (event) => {
     const decisionSuffix = data.decision ? '（证据判定：' + data.decision + '）' : '';
     const mainTitle = (data.message || '处理完成') + decisionSuffix;
 
-    if (data.status === 'answered' && data.decision === 'supported') {
+    const isSupported = data.status === 'answered' && data.decision === 'supported';
+
+    if (isSupported) {
       const citCount = data.citations ? data.citations.length : 0;
       setStatusBanner(
         'success',
         mainTitle,
-        '已基于 ' + citCount + ' 项 PDF 证据生成中文解释，来源匹配已核验；中文语义请与原文对照。',
+        '已基于 ' + citCount + ' 项 PDF 证据生成中文排查释义，来源已核验；关键操作请与原文对照。',
         '✅'
       );
     } else if (data.decision === 'abstain' || data.status === 'abstain') {
@@ -463,23 +466,29 @@ form.addEventListener('submit', async (event) => {
       );
     }
 
-    // 渲染 Warnings 与说明
+    // 渲染 Warnings 与说明（成功回答时压缩技术解析与重复免责说明，其余关键禁忌与冲突完整显示）
     for (const warning of data.warnings || []) {
-      const alertDiv = node('div', '', warningsList, 'alert-card');
       if (warning.startsWith('已从问题提取故障码')) {
-        alertDiv.classList.add('alert-info');
-        const header = node('div', '', alertDiv, 'alert-card-header');
+        const alertEl = node(isSupported ? 'details' : 'div', '', warningsList, 'alert-card alert-info' + (isSupported ? ' alert-collapsible' : ''));
+        const header = node(isSupported ? 'summary' : 'div', '', alertEl, 'alert-card-header');
         node('span', '🔍 检索查询解析', header, 'alert-card-tag');
-        node('p', warning, alertDiv, 'alert-card-text');
+        if (isSupported) {
+          node('span', '（已自动提取故障码与检索参数 · 点击查看）', header, 'alert-collapsible-hint');
+        }
+        node('p', warning, alertEl, 'alert-card-text');
       } else if (warning.includes('AI 基于资料的释义') || warning.includes('这不是现场故障确诊')) {
-        alertDiv.classList.add('alert-governance');
-        const header = node('div', '', alertDiv, 'alert-card-header');
+        const alertEl = node(isSupported ? 'details' : 'div', '', warningsList, 'alert-card alert-governance' + (isSupported ? ' alert-collapsible' : ''));
+        const header = node(isSupported ? 'summary' : 'div', '', alertEl, 'alert-card-header');
         node('span', '🛡️ 治理与免责准则', header, 'alert-card-tag');
-        node('p', warning, alertDiv, 'alert-card-text');
+        if (isSupported) {
+          node('span', '（AI 释义与原文核对约束 · 点击查看）', header, 'alert-collapsible-hint');
+        }
+        node('p', warning, alertEl, 'alert-card-text');
       } else {
-        alertDiv.classList.add('alert-warning');
+        // 重要注意事项、版本冲突或条件约束：始终保持常驻展开，不得隐藏
+        const alertDiv = node('div', '', warningsList, 'alert-card alert-warning');
         const header = node('div', '', alertDiv, 'alert-card-header');
-        node('span', '⚠️ 注意事项', header, 'alert-card-tag');
+        node('span', '⚠️ 重要注意事项', header, 'alert-card-tag');
         node('p', warning, alertDiv, 'alert-card-text');
       }
     }

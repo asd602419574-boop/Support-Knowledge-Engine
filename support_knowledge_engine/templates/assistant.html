@@ -2,27 +2,32 @@
 {% block title %}AI 售后知识工作台 · Support Knowledge Engine{% endblock %}
 
 {% block sidebar_footer %}
-  <!-- 模型连接与就绪状态 -->
+  <!-- 模型连接与就绪状态（紧凑展示，详细信息可展开） -->
   <div class="assistant-model-card {{ 'model-ready' if model_status.configured else 'model-warning' }}">
     <div class="model-status-indicator">
       <span class="status-dot"></span>
       <strong class="status-label">
         {% if model_status.configured %}
-          已配置，连接状态待验证 · {{ llm_model }}
+          已配置 · {{ llm_model }}
         {% else %}
           模型未配置
         {% endif %}
       </strong>
     </div>
-    <p class="model-status-desc" id="model-configuration">{{ model_status.message }}</p>
-    {% if model_status.configured %}
-      <div class="model-tag-row">
-        <span class="model-tag">目标模型：{{ llm_model }}</span>
-        <span class="model-tag">只读问答通道</span>
+    <details class="model-details-toggle">
+      <summary class="model-details-summary">查看状态详情</summary>
+      <div class="model-details-body">
+        <p class="model-status-desc" id="model-configuration">{{ model_status.message }}</p>
+        {% if model_status.configured %}
+          <div class="model-tag-row">
+            <span class="model-tag">目标模型：{{ llm_model }}</span>
+            <span class="model-tag">只读问答通道</span>
+          </div>
+        {% else %}
+          <div class="model-hint">可在服务环境配置 <code>SUPPORT_KE_LLM_API_KEY</code> 后重启。</div>
+        {% endif %}
       </div>
-    {% else %}
-      <div class="model-hint">可在服务环境配置 <code>SUPPORT_KE_LLM_API_KEY</code> 后重启。</div>
-    {% endif %}
+    </details>
   </div>
 {% endblock %}
 
