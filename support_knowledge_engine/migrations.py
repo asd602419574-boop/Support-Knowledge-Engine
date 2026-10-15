@@ -199,10 +199,333 @@ def _migration_003_corpus_pilot(connection: sqlite3.Connection) -> None:
     )
 
 
+# Code revert does not roll the database back. Restoring a backup taken before
+# migration 4 discards every runtime_traces row written after that migration.
+MIGRATION_004_DATA_LOSS = (
+    "Restoring a backup taken before migration 4 discards every runtime_traces "
+    "row written after that migration."
+)
+
+
+def _migration_004_runtime_trace(connection: sqlite3.Connection) -> None:
+    # execute keeps this migration inside apply_migrations' transaction.
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS runtime_traces (
+               id INTEGER PRIMARY KEY,
+               run_id TEXT NOT NULL UNIQUE,
+               step_id TEXT NOT NULL CHECK (step_id = '1'),
+               tool_name TEXT,
+               tool_version TEXT,
+               runtime_version TEXT NOT NULL,
+               request_schema_version TEXT,
+               response_schema_version TEXT,
+               runtime_request_schema_version TEXT,
+               runtime_response_schema_version TEXT NOT NULL,
+               input_json TEXT NOT NULL,
+               output_json TEXT NOT NULL,
+               decision_json TEXT NOT NULL,
+               evidence_ids TEXT NOT NULL,
+               latency_ms REAL NOT NULL CHECK (latency_ms >= 0),
+               termination_reason TEXT NOT NULL CHECK (termination_reason IN (
+                   'supported', 'abstain', 'conflict',
+                   'invalid_request', 'retrieval_failure', 'retrieval_timeout',
+                   'source_index_mismatch'
+               )),
+               created_at TEXT NOT NULL,
+               trace_schema_version TEXT NOT NULL CHECK (trace_schema_version = '1')
+           )"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS runtime_traces_no_update
+           BEFORE UPDATE ON runtime_traces
+           BEGIN
+               SELECT RAISE(ABORT, 'runtime_traces is append-only');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS runtime_traces_no_delete
+           BEFORE DELETE ON runtime_traces
+           BEGIN
+               SELECT RAISE(ABORT, 'runtime_traces is append-only');
+           END"""
+    )
+    # REPLACE deletes the old row without firing DELETE triggers unless
+    # recursive_triggers is on. Reject that rewrite while the old row is visible.
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS runtime_traces_no_replace
+           BEFORE INSERT ON runtime_traces
+           WHEN EXISTS (
+               SELECT 1 FROM runtime_traces
+               WHERE run_id = NEW.run_id OR id = NEW.id
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'runtime_traces is append-only');
+           END"""
+    )
+
+
+# Code revert does not roll the database back. Restoring a backup taken before
+# migration 5 discards case rows and case-linked trace ids written after it.
+MIGRATION_005_DATA_LOSS = (
+    "Restoring a backup taken before migration 5 discards every support_cases, "
+    "case_evidence, and case_trace_links row written after that migration, "
+    "and discards runtime_traces.case_id values written after that migration."
+)
+
+
+def _migration_005_case_store(connection: sqlite3.Connection) -> None:
+    # execute keeps this migration inside apply_migrations' transaction.
+    hex32 = "[0-9a-f]" * 32
+    case_id_check = f"length(case_id) = 38 AND case_id GLOB 'case1-{hex32}'"
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS support_cases (
+               id INTEGER PRIMARY KEY,
+               case_id TEXT NOT NULL UNIQUE CHECK ({case_id_check}),
+               created_at TEXT NOT NULL,
+               context_json TEXT NOT NULL,
+               context_schema_version TEXT NOT NULL CHECK (context_schema_version = '1'),
+               context_updated_at TEXT NOT NULL,
+               decision_type TEXT NOT NULL CHECK (
+                   decision_type IN ('supported', 'abstain', 'conflict')
+               ),
+               reason_codes_json TEXT NOT NULL,
+               retrieval_state TEXT NOT NULL CHECK (
+                   retrieval_state IN (
+                       'ambiguous_product', 'high_confidence', 'insufficient_evidence',
+                       'outdated_only', 'possible_match', 'version_conflict'
+                   )
+               ),
+               packet_schema_version TEXT NOT NULL
+           )"""
+    )
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS case_evidence (
+               id INTEGER PRIMARY KEY,
+               case_id TEXT NOT NULL REFERENCES support_cases(case_id) ON DELETE RESTRICT,
+               evidence_id TEXT NOT NULL,
+               snapshot_schema_version TEXT NOT NULL,
+               supporting_original_text TEXT NOT NULL,
+               document_lifecycle TEXT NOT NULL,
+               product_lifecycle TEXT,
+               authority_level TEXT NOT NULL,
+               original_content_digest TEXT NOT NULL,
+               decision_visible_representation TEXT NOT NULL,
+               decision_visible_digest TEXT NOT NULL,
+               pdf_sha256 TEXT NOT NULL,
+               page_number INTEGER NOT NULL CHECK (page_number > 0),
+               document_identity TEXT NOT NULL,
+               captured_at TEXT NOT NULL,
+               source_policy TEXT NOT NULL,
+               visible_policy TEXT NOT NULL,
+               UNIQUE(case_id, evidence_id)
+           )"""
+    )
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS case_trace_links (
+               id INTEGER PRIMARY KEY,
+               case_id TEXT NOT NULL REFERENCES support_cases(case_id) ON DELETE RESTRICT,
+               run_id TEXT NOT NULL CHECK (length(run_id) = 32 AND run_id GLOB '{hex32}'),
+               recorded_at TEXT NOT NULL,
+               UNIQUE(case_id, run_id)
+           )"""
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_case_evidence_case ON case_evidence(case_id)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_case_trace_links_case ON case_trace_links(case_id)"
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS support_cases_no_delete
+           BEFORE DELETE ON support_cases
+           BEGIN
+               SELECT RAISE(ABORT, 'support_cases identity is immutable');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS support_cases_no_replace
+           BEFORE INSERT ON support_cases
+           WHEN EXISTS (
+               SELECT 1 FROM support_cases
+               WHERE id = NEW.id OR case_id = NEW.case_id
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'support_cases identity is immutable');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS support_cases_identity_no_update
+           BEFORE UPDATE OF id, case_id, created_at, context_schema_version,
+                             decision_type, reason_codes_json, retrieval_state,
+                             packet_schema_version
+           ON support_cases
+           BEGIN
+               SELECT RAISE(ABORT, 'support_cases identity is immutable');
+           END"""
+    )
+    for table in ("case_evidence", "case_trace_links"):
+        connection.execute(
+            f"""CREATE TRIGGER IF NOT EXISTS {table}_no_update
+                BEFORE UPDATE ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{table} is append-only');
+                END"""
+        )
+        connection.execute(
+            f"""CREATE TRIGGER IF NOT EXISTS {table}_no_delete
+                BEFORE DELETE ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{table} is append-only');
+                END"""
+        )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS case_evidence_no_replace
+           BEFORE INSERT ON case_evidence
+           WHEN EXISTS (
+               SELECT 1 FROM case_evidence
+               WHERE id = NEW.id OR (case_id = NEW.case_id AND evidence_id = NEW.evidence_id)
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'case_evidence is append-only');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS case_trace_links_no_replace
+           BEFORE INSERT ON case_trace_links
+           WHEN EXISTS (
+               SELECT 1 FROM case_trace_links
+               WHERE id = NEW.id OR (case_id = NEW.case_id AND run_id = NEW.run_id)
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'case_trace_links is append-only');
+           END"""
+    )
+    _add_column(
+        connection,
+        "runtime_traces",
+        "case_id TEXT CHECK (case_id IS NULL OR ("
+        f"{case_id_check}))",
+    )
+
+
+# Code revert does not roll the database back. Restoring a backup taken before
+# migration 6 discards fidelity columns and case rows written after it.
+MIGRATION_006_DATA_LOSS = (
+    "Restoring a backup taken before migration 6 discards case_evidence "
+    "identity, metadata digest, firmware applicability, tool provenance, "
+    "transformation version, and source locator values written after that "
+    "migration, and discards support_cases, case_evidence, and "
+    "case_trace_links rows written after that backup."
+)
+
+
+def _migration_006_case_evidence_fidelity(connection: sqlite3.Connection) -> None:
+    # execute keeps this migration inside apply_migrations' transaction.
+    for definition in (
+        "document_id INTEGER",
+        "filename TEXT",
+        "source_locator TEXT",
+        "source_url TEXT",
+        "supporting_text_source TEXT",
+        "metadata_digest TEXT",
+        "canonical_product_id INTEGER",
+        "canonical_product_name TEXT",
+        "firmware_range TEXT",
+        "firmware_applicability TEXT",
+        "retrieval_tool_name TEXT",
+        "retrieval_tool_version TEXT",
+        "retrieval_response_schema_version TEXT",
+        "decision_visible_source TEXT",
+        "transformation_version TEXT",
+    ):
+        _add_column(connection, "case_evidence", definition)
+
+
+# Code revert does not roll the database back. Restoring a backup taken before
+# migration 7 discards workflow events written after that backup.
+MIGRATION_007_DATA_LOSS = (
+    "Restoring a backup taken before migration 7 discards every workflow_events "
+    "row written after that backup. The restored database returns to schema 6 "
+    "and has no support workflow history."
+)
+
+
+def _migration_007_support_workflow(connection: sqlite3.Connection) -> None:
+    # execute keeps this migration inside apply_migrations' transaction.
+    hex32 = "[0-9a-f]" * 32
+    hex64 = "[0-9a-f]" * 64
+    case_id_check = f"length(case_id) = 38 AND case_id GLOB 'case1-{hex32}'"
+    evidence_check = (
+        "evidence_id IS NULL OR "
+        f"(length(evidence_id) = 68 AND evidence_id GLOB 'ev1-{hex64}')"
+    )
+    decision_check = (
+        "decision_reference IS NULL OR "
+        f"(length(decision_reference) = 69 AND decision_reference GLOB 'dec1-{hex64}')"
+    )
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS workflow_events (
+               id INTEGER PRIMARY KEY,
+               case_id TEXT NOT NULL REFERENCES support_cases(case_id) ON DELETE RESTRICT,
+               sequence INTEGER NOT NULL CHECK (sequence >= 1),
+               from_state TEXT NOT NULL,
+               to_state TEXT NOT NULL,
+               evidence_id TEXT,
+               decision_reference TEXT,
+               recorded_at TEXT NOT NULL,
+               event_schema_version TEXT NOT NULL CHECK (event_schema_version = '1'),
+               UNIQUE(case_id, sequence),
+               CHECK ({case_id_check}),
+               CHECK ({evidence_check}),
+               CHECK ({decision_check}),
+               CHECK (
+                   (from_state = 'opened' AND to_state = 'investigating'
+                    AND evidence_id IS NULL AND decision_reference IS NULL)
+                   OR (from_state = 'investigating' AND to_state = 'resolved'
+                       AND evidence_id IS NOT NULL AND decision_reference IS NULL)
+                   OR (from_state = 'investigating' AND to_state = 'abstained'
+                       AND evidence_id IS NULL AND decision_reference IS NOT NULL)
+               )
+           )"""
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workflow_events_case ON workflow_events(case_id, sequence)"
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS workflow_events_no_update
+           BEFORE UPDATE ON workflow_events
+           BEGIN
+               SELECT RAISE(ABORT, 'workflow_events is append-only');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS workflow_events_no_delete
+           BEFORE DELETE ON workflow_events
+           BEGIN
+               SELECT RAISE(ABORT, 'workflow_events is append-only');
+           END"""
+    )
+    connection.execute(
+        """CREATE TRIGGER IF NOT EXISTS workflow_events_no_replace
+           BEFORE INSERT ON workflow_events
+           WHEN EXISTS (
+               SELECT 1 FROM workflow_events
+               WHERE id = NEW.id OR (case_id = NEW.case_id AND sequence = NEW.sequence)
+           )
+           BEGIN
+               SELECT RAISE(ABORT, 'workflow_events is append-only');
+           END"""
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     (1, "phase 1 baseline", _migration_001_baseline),
     (2, "knowledge governance and lifecycle", _migration_002_governance),
     (3, "controlled corpus acquisition and search observability", _migration_003_corpus_pilot),
+    (4, "runtime trace", _migration_004_runtime_trace),
+    (5, "case store", _migration_005_case_store),
+    (6, "case evidence fidelity", _migration_006_case_evidence_fidelity),
+    (7, "support workflow", _migration_007_support_workflow),
 )
 
 

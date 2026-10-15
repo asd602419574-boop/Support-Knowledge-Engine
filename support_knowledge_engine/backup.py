@@ -47,9 +47,19 @@ def _inspect_database(path: str | Path) -> dict:
         connection.close()
 
 
-def create_backup(database_path: str | Path, output_directory: str | Path) -> tuple[Path, dict]:
+def create_backup(
+    database_path: str | Path,
+    output_directory: str | Path,
+    *,
+    migrate: bool = True,
+) -> tuple[Path, dict]:
+    """Copy a consistent snapshot. The default still migrates before copying."""
+
     source = Path(database_path)
-    init_database(source)
+    if migrate:
+        init_database(source)
+    elif not source.is_file():
+        raise ValueError(f"数据库不存在：{source}")
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
     destination = output / f"knowledge-{_timestamp()}.sqlite3"

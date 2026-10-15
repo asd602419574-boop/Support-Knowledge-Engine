@@ -1,0 +1,449 @@
+{% extends "base_workbench.html" %}
+{% block title %}AI 售后知识工作台 · Support Knowledge Engine{% endblock %}
+
+{% block sidebar_footer %}
+  <!-- 模型连接与就绪状态（紧凑展示，详细信息可展开） -->
+  <div class="assistant-model-card {{ 'model-ready' if model_status.configured else 'model-warning' }}">
+    <div class="model-status-indicator">
+      <span class="status-dot"></span>
+      <strong class="status-label">
+        {% if model_status.configured %}
+          已配置 · {{ llm_model }}
+        {% else %}
+          模型未配置
+        {% endif %}
+      </strong>
+    </div>
+    <details class="model-details-toggle">
+      <summary class="model-details-summary">查看状态详情</summary>
+      <div class="model-details-body">
+        <p class="model-status-desc" id="model-configuration">{{ model_status.message }}</p>
+        {% if model_status.configured %}
+          <div class="model-tag-row">
+            <span class="model-tag">目标模型：{{ llm_model }}</span>
+            <span class="model-tag">只读问答通道</span>
+          </div>
+        {% else %}
+          <div class="model-hint">可在服务环境配置 <code>SUPPORT_KE_LLM_API_KEY</code> 后重启。</div>
+        {% endif %}
+      </div>
+    </details>
+  </div>
+{% endblock %}
+
+{% block content %}
+  <!-- 移动端精简顶部导航栏 (含抽屉开关) -->
+  <div class="wb-mobile-topbar">
+    <button type="button" class="wb-mobile-btn" id="wb-menu-toggle" aria-label="打开系统导航">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="12" x2="21" y2="12"></line>
+        <line x1="3" y1="6" x2="21" y2="6"></line>
+        <line x1="3" y1="18" x2="21" y2="18"></line>
+      </svg>
+    </button>
+    <div class="wb-mobile-brand">
+      <span class="wb-logo-mark">⚡</span>
+      <span>SKE 售后助手</span>
+    </div>
+    <button type="button" class="wb-mobile-btn" id="wb-panel-toggle" aria-label="查看可溯源证据" title="查看证据">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+      </svg>
+    </button>
+  </div>
+
+  <div class="assistant-container">
+    <!-- 主对话流与排查工作区 -->
+    <div class="assistant-feed" id="assistant-feed">
+
+      <!-- 初始欢迎界面 (SaaS 现代感大厂欢迎卡片) -->
+      <section class="assistant-welcome-card" id="assistant-welcome">
+        <div class="welcome-avatar">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+          </svg>
+        </div>
+        <h2 class="welcome-title">你好，有什么可以帮到你？</h2>
+        <p class="welcome-desc">
+          选择产品型号并输入客户故障描述，系统将自动关联已校验的 PDF 技术手册，基于严格可信证据输出可溯源的排查建议。
+        </p>
+
+        <div class="welcome-features-grid">
+          <div class="welcome-feature-item">
+            <div class="feature-icon">📄</div>
+            <div class="feature-content">
+              <strong>本地 PDF 知识库</strong>
+              <span>严格绑定已校验的技术手册与页码，保证真实出处。</span>
+            </div>
+          </div>
+          <div class="welcome-feature-item">
+            <div class="feature-icon">🛡️</div>
+            <div class="feature-content">
+              <strong>可信证据保障</strong>
+              <span>证据不足安全拒答，禁止大模型无依据臆测或虚构。</span>
+            </div>
+          </div>
+          <div class="welcome-feature-item">
+            <div class="feature-icon">⚡</div>
+            <div class="feature-content">
+              <strong>单轮有界问答</strong>
+              <span>单次独立诊断，不保存多轮上下文，保护排查确定性。</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 常用故障快捷填入示例 -->
+        {% set acm2_product = namespace(id=none) %}
+        {% for product in products %}
+          {% if product.standard_name == 'AeroCam Mini 2' %}
+            {% set acm2_product.id = product.id %}
+          {% endif %}
+        {% endfor %}
+        {% if acm2_product.id %}
+        <div class="welcome-examples-section">
+          <span class="welcome-examples-label">💡 快捷排查测试（点击一键带入产品与故障）：</span>
+          <div class="welcome-examples-chips">
+            <button type="button" class="example-chip" data-product="{{ acm2_product.id }}" data-query="ACM2 出现 AM2-17，gimbal home sensor 应如何检查？">
+              <span class="chip-icon">🎯</span> ACM2 · AM2-17 云台传感器
+            </button>
+            <button type="button" class="example-chip" data-product="{{ acm2_product.id }}" data-query="ACM2 云台限位传感器异常如何排查？">
+              <span class="chip-icon">🔍</span> ACM2 · 云台限位排查
+            </button>
+          </div>
+        </div>
+        {% endif %}
+      </section>
+
+      <!-- 用户提问气泡 -->
+      <div class="chat-bubble-user" id="assistant-user-bubble" style="display: none;">
+        <div class="bubble-avatar" aria-hidden="true">👤</div>
+        <div class="bubble-content">
+          <div class="user-meta-row">
+            <span class="user-meta-pill" id="assistant-user-product-tag">📌 适用产品：--</span>
+            <span class="user-meta-pill" id="assistant-user-firmware-tag" style="display: none;">🏷️ 固件版本：--</span>
+            <span class="user-meta-pill user-meta-mode">单轮问答</span>
+          </div>
+          <div class="user-query-text" id="assistant-user-query-text"></div>
+        </div>
+      </div>
+
+      <!-- AI 检索与推理加载中气泡 -->
+      <div class="chat-bubble-ai-loading" id="assistant-loading-bubble" style="display: none;">
+        <div class="bubble-avatar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+          </svg>
+        </div>
+        <div class="loading-content">
+          <div class="loading-pulse"><span></span><span></span><span></span></div>
+          <div class="loading-title">正在检索和核验证据；通过后调用模型，请稍候…</div>
+          <div class="loading-hint">系统正在执行本地知识库检索与证据可信度判定，核验通过后调取大模型生成排查要点。</div>
+        </div>
+      </div>
+
+      <!-- AI 排查结果核心卡片 -->
+      <section id="pcn-result" class="panel assistant-card assistant-result-card" hidden aria-label="PCN 流程合规审查" data-url="{{ url_for('pcn_review.review') }}">
+        <h2>PCN 流程合规审查 · 本地只读规则</h2>
+        <p class="steps-intro">与知识问答独立，不调用模型、不保存审查记录。请先人工确认案例；无需勾选向模型发送同意。本版仅识别 NTF 测试影像清理的有限表述。</p>
+        <p id="pcn-message" role="status" aria-live="polite"></p>
+        <div id="pcn-case-source"></div>
+        <div id="pcn-requirements"></div>
+        <div id="pcn-confirm-panel" hidden>
+          <label><input type="checkbox" id="pcn-applicability">我已阅读 PCN 完整原文，核对型号、适用条件及义务解释，确认本次适用</label>
+          <button type="button" id="pcn-compare" class="btn btn-sm">确认要求并比对执行记录</button>
+        </div>
+        <div id="pcn-checks"></div>
+        <p class="steps-intro">仅为记录层面核对，不证明真实执行；不得用于员工定责、绩效扣罚或自动拦截。</p>
+      </section>
+      <section class="panel assistant-card assistant-result-card" aria-labelledby="assistant-result-title" aria-busy="false" id="assistant-result" style="display: none;">
+        <div class="card-header result-header">
+          <div class="result-title-group">
+            <div class="result-avatar">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                <line x1="12" y1="22.08" x2="12" y2="12"></line>
+              </svg>
+            </div>
+            <div>
+              <h2 id="assistant-result-title">排查结论与证据</h2>
+              <span class="result-sub-badge">DeepSeek 中文释义 · 原文对照</span>
+            </div>
+          </div>
+          <div class="result-actions-top" id="assistant-result-actions" style="display: none;">
+            <button type="button" class="button-secondary button-small" id="assistant-copy-btn" title="复制排查结论与引用快照">
+              📋 复制排查内容
+            </button>
+          </div>
+        </div>
+
+        <!-- 5 种严格状态横幅看板 -->
+        <div id="assistant-status-box" class="status-banner status-banner-idle">
+          <div class="status-banner-icon" id="assistant-status-icon">💡</div>
+          <div class="status-banner-body">
+            <p id="assistant-status" class="status-banner-title" role="status" aria-live="polite">
+              等待提交问题。请选择产品并输入故障描述。
+            </p>
+            <p id="assistant-status-detail" class="status-banner-desc">
+              系统将检索本地已校验的 PDF 技术文档，并通过严格的可信证据判定后由模型整理排查依据。
+            </p>
+          </div>
+        </div>
+
+        <!-- 骨架屏加载 -->
+        <div id="assistant-loading-skeleton" class="assistant-skeleton" style="display: none;">
+          <div class="skeleton-line skeleton-title"></div>
+          <div class="skeleton-line"></div>
+          <div class="skeleton-line"></div>
+          <div class="skeleton-line skeleton-short"></div>
+        </div>
+
+        <!-- 结构化提示、注意事项与治理声明 -->
+        <div id="assistant-warnings" class="assistant-warnings-container"></div>
+
+        <!-- 核心排查建议结构化展示 -->
+        <section id="assistant-case-result" class="assistant-steps-section" hidden aria-label="本次已确认案例来源"></section>
+        <div id="assistant-steps-container" class="assistant-steps-section" style="display: none;">
+          <div class="section-subheading">
+            <span class="section-subheading-icon">📋</span>
+            <h3>中文解释与核查引导</h3>
+            <span class="section-subheading-badge">AI 释义 · 原文对照</span>
+          </div>
+          <p class="steps-intro">中文内容是 AI 基于资料的解释，不是手册原文或现场确诊。每项可展开查看对应完整原文。</p>
+          <p id="assistant-coverage" class="steps-intro"></p>
+          
+          <h4 class="category-title"><span class="cat-pill cat-pill-fact">知</span> 已知故障信息</h4>
+          <div id="assistant-facts" class="assistant-steps-list"></div>
+
+          <h4 class="category-title"><span class="cat-pill cat-pill-action">序</span> 建议核查事项</h4>
+          <p id="assistant-no-actions" class="steps-intro" style="display: none;">现有回答没有可确认的具体操作步骤，请先补充适用的检查流程资料。</p>
+          <ol id="assistant-steps" class="assistant-steps-list"></ol>
+
+          <h4 class="category-title"><span class="cat-pill cat-pill-caution">注</span> 适用条件和注意事项</h4>
+          <div id="assistant-cautions" class="assistant-steps-list"></div>
+
+          <h4 class="category-title"><span class="cat-pill cat-pill-missing">缺</span> 尚需补充的信息</h4>
+          <ul id="assistant-missing" class="missing-info-list"></ul>
+        </div>
+
+        <!-- 移动端内联证据文档列表 (小屏幕兜底与便携阅读) -->
+        <div id="assistant-citations-container" class="assistant-citations-section" style="display: none;">
+          <div class="section-subheading">
+            <span class="section-subheading-icon">📚</span>
+            <h3>可溯源证据文档</h3>
+            <span class="section-subheading-badge" id="assistant-citation-count">0 项证据引用</span>
+          </div>
+          <p class="citations-intro">点击可在浏览器新标签页打开对应 PDF 并定位至所在页码：</p>
+          <div id="assistant-citations" class="assistant-citations-list"></div>
+        </div>
+      </section>
+
+    </div> <!-- /assistant-feed -->
+
+    <!-- 底部固定输入控制台 -->
+    <div class="assistant-input-container">
+      <form id="assistant-form" novalidate data-csrf="{{ csrf_token }}" data-url="{{ url_for('assistant.ask') }}">
+        
+        <!-- 可展开上下文抽屉 (产品型号与固件版本) -->
+        <div class="context-drawer" id="assistant-context-drawer" style="display: none;">
+          <div class="context-drawer-header">
+            <div class="context-drawer-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+              <strong>关联产品与设备上下文</strong>
+              <span class="context-drawer-hint">（案例仅在本页核对）</span>
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" id="assistant-context-close">收起 ✕</button>
+          </div>
+
+          <div class="context-drawer-grid">
+            <div class="form-group">
+              <label for="assistant-product">
+                适用产品型号 <span class="required-mark" aria-hidden="true">*</span>
+              </label>
+              <div class="select-wrapper">
+                <select id="assistant-product" name="product_id" required>
+                  <option value="">请选择产品型号</option>
+                  {% for product in products %}
+                    <option value="{{ product.id }}">
+                      {{ product.standard_name }} ({{ product_status_labels.get(product.status, product.status) }})
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div class="label-with-helper">
+                <label for="assistant-firmware">固件版本（可选）</label>
+                <span class="helper-badge" title="非空固件范围尚无解析规则时，系统保持保守未知判定">保守适用性</span>
+              </div>
+              <input id="assistant-firmware" name="firmware_version" maxlength="80" placeholder="例如 2.5.0（留空则不限版本）">
+            </div>
+          </div>
+
+          <section id="case-intake" class="case-intake" hidden aria-labelledby="case-title">
+            <h3 id="case-title">粘贴脱敏案例 · 本地识别与人工核对</h3>
+            <p class="case-notice">原始粘贴文本仅在本页解析，不保存、不自动发送。确认并同意后，分类、检测及处理记录会随本次问题发送给已配置模型服务（DeepSeek）；案例记录不代表设备实际状态，也不是 PDF 证据。系统不能识别全部敏感信息。</p>
+            <label for="case-raw">脱敏案例文本（最多 12000 字）</label>
+            <textarea id="case-raw" rows="5" autocomplete="off" placeholder="产品名称：ACM2&#10;故障描述：出现 AM2-17&#10;检测记录：上电显示故障码&#10;维修记录：计划检查，尚未执行"></textarea>
+            <label class="case-check"><input type="checkbox" id="case-anonymized">我已人工确认移除姓名、电话、邮箱、SN、案例号和身份信息</label>
+            <div class="case-buttons"><button type="button" id="case-extract" class="btn btn-sm">本地提取</button><button type="button" id="case-clear" class="btn btn-ghost btn-sm">清除本地案例</button></div>
+            <p id="case-message" role="status" aria-live="polite" tabindex="-1"></p>
+            <div id="case-preview" hidden>
+              <p id="case-product-match" class="case-notice"></p>
+              <div class="context-drawer-grid">
+                <div class="form-group"><label for="case-product">产品型号（必须人工确认）</label><select id="case-product"><option value="">请选择现有产品</option>{% for product in products %}<option value="{{ product.id }}">{{ product.standard_name }}</option>{% endfor %}</select></div>
+                <div class="form-group"><label for="case-category">故障分类（可选）</label><input id="case-category"></div>
+              </div>
+              <label for="case-fault">故障描述（填入问答，2–1000 字）</label><textarea id="case-fault" rows="3"></textarea>
+              <label for="case-detection">已记录检测结果（仅供核对）</label><textarea id="case-detection" rows="2"></textarea>
+              <label for="case-done">已执行处理（案例所述，尚非证据）</label><textarea id="case-done" rows="2"></textarea>
+              <label for="case-pending">计划／建议／完成状态未确认（仅供核对）</label><textarea id="case-pending" rows="2"></textarea>
+              <label for="case-firmware">固件版本（可选）</label><input id="case-firmware">
+              <strong>信息缺口与核对提示</strong><ul id="case-gaps"></ul>
+              <label class="case-check"><input type="checkbox" id="case-reviewed">我已人工核对产品、故障、检测和处理状态，并再次确认脱敏</label>
+              <label class="case-check"><input type="checkbox" id="case-send-consent">我同意将上述确认后的分类、检测、已执行及待确认操作发送给模型服务（DeepSeek），仅用于本次辅助诊断。未勾选时只填入原三字段。</label>
+              <button type="button" id="case-confirm" class="btn btn-sm">确认并填入问答</button>
+            </div>
+          </section>
+        </div>
+
+        <!-- 核心输入卡片栏 (Claude/Intercom 风格悬浮 Bar) -->
+        <div class="assistant-input-bar">
+          
+          <!-- 上方快速上下文条目 -->
+          <div class="input-bar-context-row">
+            <button type="button" id="assistant-case-open" class="context-toggle-btn">粘贴案例</button>
+            <button type="button" id="assistant-pcn-open" class="context-toggle-btn">PCN 审查</button>
+            <button type="button" class="context-toggle-btn" id="assistant-context-toggle" title="展开/收起产品与固件设置">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+              <span class="context-status-dot" id="assistant-context-dot"></span>
+              <span class="context-badge-text" id="assistant-product-badge">⚠️ 请选择适用产品型号 *</span>
+              <span class="context-expand-hint">切换 ▾</span>
+            </button>
+          </div>
+
+          <!-- 输入文本区 -->
+          <div class="input-textarea-wrapper">
+            <textarea
+              id="assistant-question"
+              name="query"
+              rows="1"
+              maxlength="1000"
+              required
+              placeholder="输入客户售后故障描述或故障码，按 Ctrl+Enter 生成排查建议..."
+            ></textarea>
+          </div>
+
+          <!-- 底部控制按钮与安全提示 -->
+          <div class="assistant-bar-actions">
+            <div class="bar-actions-left">
+              <span class="security-chip" title="向已配置的模型服务发送问题、产品型号、固件版本及匹配证据；服务不执行写入">
+                🔒 只读通道 · 证据不足安全拒答
+              </span>
+              <span class="char-count" id="assistant-char-count">0 / 1000 字</span>
+            </div>
+
+            <div class="bar-actions-right">
+              <button type="button" class="btn btn-ghost btn-sm" id="assistant-clear-btn" title="清空当前输入并返回欢迎页">
+                清空
+              </button>
+              <button type="submit" id="assistant-submit" class="chat-send-btn" title="生成排查建议 (Ctrl+Enter)">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+                <span>生成排查建议</span>
+              </button>
+            </div>
+          </div>
+
+        </div> <!-- /assistant-input-bar -->
+
+        <!-- 数据传输与隐私提醒 -->
+        <div class="assistant-data-privacy-notice">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+          <span>问题、产品及必要证据会发送至配置的模型服务；请勿输入客户姓名、电话、SN 等敏感信息。</span>
+        </div>
+
+      </form>
+    </div> <!-- /assistant-input-container -->
+
+  </div> <!-- /assistant-container -->
+  <script id="assistant-product-catalog" type="application/json">{{ case_products|tojson }}</script>
+  <script src="{{ url_for('static', filename='case_parser.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='assistant.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='case_context.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='pcn_review.js') }}" defer></script>
+{% endblock %}
+
+{% block panel %}
+  <!-- 右栏：上下文与证据溯源工作面板 (参考 Intercom Details Panel) -->
+  <div class="wb-panel-section">
+    <h3 class="wb-panel-title">当前上下文</h3>
+    <div class="wb-context-card">
+      <div class="wb-context-row">
+        <span class="wb-context-label">适用产品</span>
+        <span class="wb-context-value" id="panel-context-product">未指定</span>
+      </div>
+      <div class="wb-context-row">
+        <span class="wb-context-label">固件版本</span>
+        <span class="wb-context-value" id="panel-context-firmware">未限定（保守适用）</span>
+      </div>
+      <div class="wb-context-row">
+        <span class="wb-context-label">交互模式</span>
+        <span class="wb-status-pill pill-mode">单轮有界问答</span>
+      </div>
+      <div class="wb-context-row">
+        <span class="wb-context-label">治理准则</span>
+        <span class="wb-status-pill pill-active">可信证据强核验</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="wb-panel-section">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--wb-border-solid); padding-bottom: 8px;">
+      <h3 class="wb-panel-title" style="border-bottom: none; padding-bottom: 0;">可溯源证据文档</h3>
+      <span class="wb-status-pill pill-active" id="assistant-panel-citation-count">0 项证据</span>
+    </div>
+
+    <!-- 初始待命空态 -->
+    <div id="assistant-panel-empty" style="padding: 24px 12px; text-align: center; color: var(--wb-text-secondary); font-size: 0.84rem;">
+      <div style="font-size: 28px; margin-bottom: 8px; opacity: 0.6;">📄</div>
+      <strong style="display: block; color: var(--wb-text); margin-bottom: 4px;">等待排查诊断</strong>
+      <span>提交故障描述后，系统将在此精准展现已核验的 PDF 技术手册、页码与原文摘录。</span>
+    </div>
+
+    <!-- 证据文档动态渲染列表 -->
+    <div id="assistant-panel-citations" class="wb-evidence-list" style="display: none;"></div>
+  </div>
+
+  <!-- 技术溯源与审计凭据折叠区 -->
+  <div class="wb-panel-section">
+    <details class="wb-evidence-details" style="background: var(--wb-surface);">
+      <summary style="font-size: 0.76rem; color: var(--wb-text-muted);">
+        🛡️ 技术治理与防幻觉机制说明
+      </summary>
+      <div style="padding: 10px 12px; font-size: 0.74rem; color: var(--wb-text-secondary); line-height: 1.55;">
+        <p style="margin: 0 0 6px;"><strong>• 确定性检索：</strong>仅依赖本地已校验有效的 PDF 技术手册，排除失效或替代文档。</p>
+        <p style="margin: 0 0 6px;"><strong>• 严格无幻觉门禁：</strong>当手册缺乏完全匹配的技术说明时，系统主动触发安全拒答。</p>
+        <p style="margin: 0;"><strong>• 原文对照约束：</strong>大模型输出的中文仅为引导释义，关键参数请务必对照右侧原文章节核验。</p>
+      </div>
+    </details>
+  </div>
+{% endblock %}

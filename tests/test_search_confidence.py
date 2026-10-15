@@ -42,5 +42,7 @@ class SearchConfidenceTests(unittest.TestCase):
             log = connection.execute("SELECT * FROM search_logs ORDER BY id DESC LIMIT 1").fetchone()
         self.assertEqual(outcome["match_state"], "ambiguous_product")
         self.assertEqual(outcome["results"], [])
-        self.assertEqual(log["original_query"], "ACM2 calibration")
+        self.assertEqual(outcome["original_query"], "ACM2 calibration")
+        stored = " ".join(str(log[name]) for name in log.keys())
+        self.assertNotIn("ACM2 calibration", stored)
         self.assertIn("AeroCam Micro 2", log["recognized_products"])

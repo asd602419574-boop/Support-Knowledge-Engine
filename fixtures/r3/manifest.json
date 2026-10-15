@@ -1,0 +1,21 @@
+{
+  "scope": "fictional_only",
+  "files": [
+    {
+      "file": "pcn-v1.pdf",
+      "sha256": "862f88e1b7915419556f74a5d021689a471c13c36b064e2cff9ab786a0c8bcd5"
+    },
+    {
+      "file": "pcn-v2.pdf",
+      "sha256": "6b5155cea859712cab64da0a4f0001c740ed3dddb0905a02a11223986d52a3a7"
+    },
+    {
+      "file": "sop-v1.pdf",
+      "sha256": "dbdea9bc4071ccd162dfa9ee0e3fcf89bce03225a197ab64abf778a25ae1da5a"
+    },
+    {
+      "file": "sop-v2.pdf",
+      "sha256": "382d30f9e88057bfd822b89fe94f5a2a12cfe05eb1ab9ca21aaa4cce6af91aa6"
+    }
+  ]
+}
